@@ -8,6 +8,10 @@ Estúdio local de imagens e vídeos com IA para Windows. Tudo roda no seu comput
 
 ![Galeria do Prisma Studio](docs/galeria.png)
 
+## IA online (opcional)
+
+Na aba **IA online** dá para cadastrar a sua chave da [fal.ai](https://fal.ai) e usar modelos maiores na nuvem (FLUX dev, FLUX schnell e FLUX 1.1 pro) em Criar imagem. É pago por imagem, na sua conta da fal.ai. A chave fica só em `config/chaves.json` (fora do Git) e nunca volta para a tela. Atenção: nos modelos online o texto vai para a fal.ai, que tem filtro de conteúdo próprio; os modelos locais continuam sem enviar nada para a internet. `node tools/teste_online.mjs` testa a integração com um servidor falso, sem gastar nada.
+
 ## Como é feito
 
 `Prisma.exe` (C#, `launcher/`) liga um servidor Node (`app/server.mjs`, sem dependências) que controla o [ComfyUI](https://github.com/comfyanonymous/ComfyUI) como motor, monta os fluxos (`app/lib/workflows.mjs`), mantém a fila de trabalhos e a galeria. A interface é HTML, CSS e JavaScript puros (`app/public/`).

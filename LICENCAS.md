@@ -16,3 +16,5 @@ O código deste repositório (app, lançador, ferramentas) é MIT. Nada abaixo �
 | Node.js | MIT | sim |
 
 Os modelos têm licenças próprias que valem para as imagens e vídeos gerados: leia-as antes de publicar ou vender resultados.
+
+O recurso opcional de IA online usa a API da fal.ai (serviço pago, com termos próprios, conferidos pelo usuário ao criar a conta). Nenhum código ou modelo da fal.ai é distribuído aqui.

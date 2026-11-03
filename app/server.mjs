@@ -7,6 +7,7 @@ import { Engine } from './lib/engine.mjs';
 import { Galeria } from './lib/gallery.mjs';
 import * as wf from './lib/workflows.mjs';
 import { Tradutor, pareceportugues } from './lib/tradutor.mjs';
+import { Online, MODELOS_ONLINE } from './lib/online.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.PRISMA_RAIZ || dirname(AQUI);            // D:\Claude\prisma
@@ -16,6 +17,7 @@ const PUBLICO = join(AQUI, 'public');
 const engine = new Engine({ raiz: RAIZ });
 const galeria = new Galeria(join(RAIZ, 'galeria'));
 const tradutor = new Tradutor({ raiz: RAIZ });
+const online = new Online({ raiz: RAIZ });
 
 const TIPOS = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.ico': 'image/x-icon', '.json': 'application/json' };
 
@@ -114,7 +116,8 @@ rota('GET', '/api/status', async (req, res) => {
   modelos.fundo = engine.temModelo('background_removal/birefnet.safetensors');
   modelos.ampliar = engine.temModelo('upscale_models/RealESRGAN_x4plus.pth');
   modelos.traducao = tradutor.disponivel();
-  json(res, { motor, modelos, fila: fila.length + (rodando ? 1 : 0) });
+  for (const m of Object.values(MODELOS_ONLINE)) modelos[m.id] = online.temChave();
+  json(res, { motor, modelos, online: { chave: online.temChave() }, fila: fila.length + (rodando ? 1 : 0) });
 });
 
 rota('POST', '/api/traduzir', async (req, res) => {
@@ -125,7 +128,14 @@ rota('POST', '/api/traduzir', async (req, res) => {
   try { json(res, { traducoes: await tradutor.traduzir(textos) }); } catch (e) { json(res, { erro: e.message }, 500); }
 });
 
-rota('GET', '/api/modelos', async (req, res) => json(res, { imagem: wf.MODELOS_IMAGEM, video: wf.MODELOS_VIDEO }));
+rota('GET', '/api/modelos', async (req, res) => json(res, { imagem: { ...wf.MODELOS_IMAGEM, ...MODELOS_ONLINE }, video: wf.MODELOS_VIDEO }));
+
+// Chave da IA online (fal.ai): só é gravada aqui, no computador; o navegador nunca recebe a chave de volta.
+rota('POST', '/api/online/chave', async (req, res) => {
+  const b = await lerJson(req);
+  try { online.salvarChave(b.chave); json(res, { ok: true }); } catch (e) { json(res, { erro: e.message }, 400); }
+});
+rota('DELETE', '/api/online/chave', async (req, res) => { online.removerChave(); json(res, { ok: true }); });
 
 rota('POST', '/api/motor/iniciar', async (req, res) => {
   engine.iniciar().catch(() => {});
@@ -138,8 +148,9 @@ rota('POST', '/api/sair', async (req, res) => { json(res, { ok: true }); setTime
 
 rota('POST', '/api/gerar', async (req, res) => {
   const b = await lerJson(req);
-  const modelo = wf.MODELOS_IMAGEM[b.modelo];
+  const modelo = wf.MODELOS_IMAGEM[b.modelo] || MODELOS_ONLINE[b.modelo];
   if (!modelo) return json(res, { erro: 'Modelo desconhecido.' }, 400);
+  if (modelo.online && !online.temChave()) return json(res, { erro: 'Cadastre a chave da fal.ai na aba Online.' }, 400);
   const prompt = texto(b.prompt);
   if (!prompt) return json(res, { erro: 'Escreva o que você quer ver.' }, 400);
   const quantidade = Math.floor(num(b.quantidade, 1, 4, 1));
@@ -158,6 +169,13 @@ rota('POST', '/api/gerar', async (req, res) => {
       job.etapa = null;
       const p = { ...params, prompt: tr.prompt, negativo: tr.negativo, semente: base + i };
       if (tr.traduzido) p.promptOriginal = tr.promptOriginal;
+      if (modelo.online) {
+        const r = await online.gerarImagem(modelo, p, (e) => { job.etapa = e; }, () => job.cancelado);
+        job.etapa = null;
+        const item = galeria.salvar({ buffer: r.buffer, ext: r.ext, tipo: 'imagem', params: { ...p, online: true } });
+        job.itens.push(item);
+        return;
+      }
       const prefixo = 'prisma_' + job.id;
       const grafo = modelo.id === 'flux' ? wf.flux({ ...p, prefixo }) : wf.sdxl({ ...p, prefixo });
       const saidas = await engine.executar(grafo, ({ passo, total }) => { job.passo = passo; job.total = total; job.progresso = total ? passo / total : 0; });

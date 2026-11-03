@@ -7,3 +7,4 @@ tmp/
 modelos_extra/
 Prisma.exe
 *.log
+config/

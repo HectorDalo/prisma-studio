@@ -234,7 +234,7 @@ function seletorModelos(catalogo, atual, aoEscolher, disponiveis) {
   const pintar = (valor) => {
     alvo.replaceChildren(...Object.values(catalogo).map((m) => h('button', {
       class: 'modelo' + (m.id === valor ? ' on' : ''), type: 'button', disabled: disponiveis && disponiveis[m.id] === false,
-      title: disponiveis && disponiveis[m.id] === false ? 'Os arquivos deste modelo não estão no computador.' : '',
+      title: disponiveis && disponiveis[m.id] === false ? (m.online ? 'Cadastre a chave na aba IA online.' : 'Os arquivos deste modelo não estão no computador.') : '',
       on: { click: () => { aoEscolher(m.id); pintar(m.id); } },
     }, h('strong', {}, m.nome), h('span', {}, m.descricao))));
   };
@@ -255,7 +255,7 @@ function renderCriar() {
       h('div', { class: 'campo' }, h('label', {}, 'Guia (cfg)'), h('input', { type: 'number', min: 1, max: 20, step: 0.5, placeholder: 'automático', value: f.cfg, on: { input: (e) => { f.cfg = e.target.value; salvarForm(); } } }))),
     h('div', { class: 'campo' }, h('label', {}, 'Semente (vazio = aleatória)'), h('input', { type: 'text', inputMode: 'numeric', placeholder: 'aleatória', value: f.semente, on: { input: (e) => { f.semente = e.target.value.replace(/\D/g, ''); salvarForm(); } } })));
   const botao = h('button', { class: 'principal', on: { click: gerar } }, 'Gerar imagem');
-  const ajustarModelo = () => { campoNeg.hidden = !cat[f.modelo].negativo; dicaModelo.textContent = f.modelo === 'flux' ? 'O FLUX entende descrições longas e escreve texto nas imagens. Não usa "o que evitar".' : ''; };
+  const ajustarModelo = () => { campoNeg.hidden = !cat[f.modelo].negativo; dicaModelo.textContent = cat[f.modelo].online ? 'Modelo na nuvem: o texto vai para a fal.ai e cada imagem é cobrada na sua conta de lá.' : f.modelo === 'flux' ? 'O FLUX entende descrições longas e escreve texto nas imagens. Não usa "o que evitar".' : ''; };
   const painel = h('div', { class: 'cartao' },
     h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Modelo'), seletorModelos(cat, f.modelo, (id) => { f.modelo = id; salvarForm(); ajustarModelo(); }, estado.status?.modelos), dicaModelo),
     campoDescricao(f, 'Descreva a imagem', 'Ex.: retrato fotográfico de uma astronauta em um campo de lavanda ao pôr do sol, luz suave, 85mm', 5),
@@ -264,7 +264,7 @@ function renderCriar() {
     h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Quantidade'), fichas([1, 2, 3, 4].map((n) => [n, n + (n === 1 ? ' imagem' : '')]), f.quantidade, (v) => { f.quantidade = Number(v); salvarForm(); })),
     avancado, botao);
   ajustarModelo();
-  raiz.append(h('h1', {}, 'Criar imagem'), h('p', { class: 'sub' }, 'Descreva o que você imagina. As imagens são geradas no seu computador, sem enviar nada para a internet, e ficam salvas na galeria.'),
+  raiz.append(h('h1', {}, 'Criar imagem'), h('p', { class: 'sub' }, 'Descreva o que você imagina. Os modelos locais geram no seu computador, sem enviar nada para a internet; os marcados como online usam a nuvem. Tudo fica salvo na galeria.'),
     h('div', { class: 'vista' }, painel, h('div', { id: 'resultados' })));
   return raiz;
 
@@ -437,12 +437,42 @@ async function renderGaleria() {
 }
 
 // ---------------------------------------------------------------- navegação
+// ---------------------------------------------------------------- vista: IA online (fal.ai)
+async function renderOnline() {
+  const raiz = $('#conteudo');
+  const status = await api('/api/status');
+  estado.status = status;
+  const tem = !!status.online?.chave;
+  const campo = h('input', { type: 'password', placeholder: 'Cole aqui a chave da fal.ai', autocomplete: 'off', spellcheck: false });
+  const salvar = async () => {
+    try { await postar('/api/online/chave', { chave: campo.value }); campo.value = ''; aviso('Chave salva neste computador.'); renderOnline(); } catch (e) { aviso(e.message, true); }
+  };
+  const remover = async () => { try { await api('/api/online/chave', { method: 'DELETE' }); aviso('Chave removida.'); renderOnline(); } catch (e) { aviso(e.message, true); } };
+  raiz.replaceChildren(
+    h('h1', {}, 'IA online'),
+    h('p', { class: 'sub' }, 'Além dos modelos que rodam no seu computador, dá para usar modelos maiores na nuvem (fal.ai), com mais qualidade. É opcional e pago por imagem.'),
+    h('div', { class: 'cartao', style: 'max-width:640px' },
+      h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Situação'),
+        h('div', {}, tem ? 'Chave cadastrada. Os modelos "online" já aparecem em Criar imagem.' : 'Sem chave. Os modelos online ficam bloqueados.')),
+      h('div', { class: 'campo' }, h('label', {}, tem ? 'Trocar a chave' : 'Chave da fal.ai'), campo),
+      h('div', { class: 'barra-acoes' },
+        h('button', { class: 'principal', style: 'width:auto;padding:10px 20px', on: { click: salvar } }, 'Salvar chave'),
+        tem ? h('button', { class: 'secundario perigo', on: { click: remover } }, 'Remover chave') : null),
+      h('details', { open: !tem }, h('summary', {}, 'Como conseguir a chave'),
+        h('ol', { class: 'dica' },
+          h('li', {}, 'Crie uma conta em fal.ai (você mesmo, no site) e coloque um pequeno saldo.'),
+          h('li', {}, 'No painel, abra "API Keys" e crie uma chave.'),
+          h('li', {}, 'Cole a chave acima. Ela fica salva só neste computador, na pasta config, e não volta para a tela.'))),
+      h('div', { class: 'dica' }, 'Atenção: ao usar um modelo online, o texto que você escreve é enviado à fal.ai, e o serviço tem filtro de conteúdo próprio. Os modelos locais continuam sem enviar nada para a internet.')));
+}
+
 function irPara(vista, origem) {
   estado.vista = vista;
   for (const b of document.querySelectorAll('#menu button')) b.classList.toggle('ativo', b.dataset.vista === vista);
   const raiz = $('#conteudo');
   raiz.scrollTop = 0;
   if (vista === 'galeria') { renderGaleria().catch((e) => aviso(e.message, true)); return; }
+  if (vista === 'online') { renderOnline().catch((e) => aviso(e.message, true)); return; }
   if (!estado.catalogo) { raiz.replaceChildren(h('p', { class: 'sub' }, 'Carregando…')); return; }
   if (vista === 'criar') { raiz.replaceChildren(renderCriar()); atualizarResultados(); }
   else if (vista === 'video') { raiz.replaceChildren(renderVideo()); atualizarResultados(); }
