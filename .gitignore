@@ -1,0 +1,9 @@
+engine/
+runtime/
+galeria/
+perfil/
+logs/
+tmp/
+modelos_extra/
+Prisma.exe
+*.log
