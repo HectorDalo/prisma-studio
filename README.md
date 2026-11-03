@@ -6,6 +6,8 @@ Estúdio local de imagens e vídeos com IA para Windows. Tudo roda no seu comput
 - Pode escrever em português: um modelo pequeno (Qwen2.5 1.5B), também local, traduz o texto para o inglês antes de gerar, e você pode revisar a tradução.
 - Janela própria (`Prisma.exe` abre o Edge em modo aplicativo); ao fechar a janela, o motor desliga e libera a placa de vídeo.
 
+![Galeria do Prisma Studio](docs/galeria.png)
+
 ## Como é feito
 
 `Prisma.exe` (C#, `launcher/`) liga um servidor Node (`app/server.mjs`, sem dependências) que controla o [ComfyUI](https://github.com/comfyanonymous/ComfyUI) como motor, monta os fluxos (`app/lib/workflows.mjs`), mantém a fila de trabalhos e a galeria. A interface é HTML, CSS e JavaScript puros (`app/public/`).
