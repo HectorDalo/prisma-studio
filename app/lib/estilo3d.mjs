@@ -137,6 +137,7 @@ export function vocabExportado(item, arquivoGlb) {
     en: v.en, pt: v.pt, categoria: v.categoria, medidas_m: v.medidas_m, tamanho_m: p.tamanho_m,
     faces: p.faces, cor: p.cor === 'vertices' ? 'vertices' : 'textura', arquivo: arquivoGlb,
     prisma_id: item.id, criado_em: item.criadoEm, pedido: p.pedido, ...(p.lote ? { cenario: p.lote } : {}),
+    ...(p.fachada ? { marca: p.fachada.marca, variacao: p.fachada.variacao, colisoes: p.colisoes } : {}),
     gerado_com: 'Prisma Studio, local: qwen2.5:7b (Apache-2.0), FLUX.1 schnell (Apache-2.0), BiRefNet (MIT), TRELLIS.2 (MIT), DINOv3 (DINOv3 License)',
     licenca: 'modelo gerado localmente; as licenças dos modelos de IA usados permitem uso comercial',
   };

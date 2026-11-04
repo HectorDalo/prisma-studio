@@ -26,7 +26,8 @@ export class Exportador {
     if (item?.tipo !== '3d') throw new Error('Só modelos 3D podem ser exportados para o jogo.');
     if (!this.disponivel()) throw new Error('Não achei o projeto do EnglishQuest para ' + this.destino);
     mkdirSync(this.destino, { recursive: true });
-    const base = nomeArquivo(item.params?.vocab?.en || 'objeto');
+    // fachada: o arquivo leva o nome da marca (greenleaf_pharmacy); o .json continua ensinando a palavra (pharmacy)
+    const base = nomeArquivo(item.params?.fachada?.marca || item.params?.vocab?.en || 'objeto');
     let nome = base;
     for (let n = 2; ; n++) {
       const json = join(this.destino, nome + '.json');
