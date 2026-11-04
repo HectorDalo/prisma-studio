@@ -4,6 +4,10 @@ extends RefCounted
 ## (poucas chamadas de desenho) + colisão em caixas, deixando o vão da porta livre para entrar.
 ## O NOME da loja no letreiro é escrito pelo Godot com uma fonte de verdade (letras 3D, acentos certos); o FLUX só faz a placa.
 ## Variações por loja: 1 ou 2 andares, rodapé de pedra, calha com descida e degrau na porta (com rampa invisível na colisão).
+## Peças padrão de toda fachada: floreiras com plantas sob as vitrines, a placa de horário ("PlacaHorario": o jogo escreve
+## OPEN/CLOSED e o horário nela, como no Maple Café) e o letreiro: placa escura lisa ("Placa", paralela e encostada na
+## parede, centrada sobre a porta) com o nome em letra clara. Farmácia ganha a cruz verde luminosa ("cruz": true).
+## Parede com padrão decorativo repetido (arcos, ornamentos, mosaico) é barrada: vira reboco liso (padrao_decorativo).
 ## Frente da loja em z = 0 olhando para +Z; o salão vai para -Z. Base em y = 0.
 ## Uso: var loja: Node3D = preload("fachada_b.gd").montar({ ...config... })
 
@@ -13,6 +17,13 @@ const DEGRAU := 0.15     # altura do degrau da porta (o piso de dentro sobe junt
 # fontes estáticas (as variáveis, como a Fredoka, perdem letras ao virar 3D: o "d" sumia); SIL OFL 1.1, em fontes/
 const FONTES := ["LilitaOne-Regular.ttf", "Pacifico-Regular.ttf", "AlfaSlabOne-Regular.ttf"]
 const PASTA_FONTES := "D:/Claude/prisma/tools/godot_limpeza/fontes"   # usada quando este arquivo roda dentro de outro projeto (o jogo)
+## Limite do padrão decorativo: dispersão do brilho entre as médias de 8 x 8 blocos da textura. Tijolo, reboco, madeira e
+## telha ficam abaixo de 0,04 (o desenho é miúdo e se repete por igual); arcos e ornamentos grandes passam de 0,14.
+const PADRAO_MAX := 0.08
+const CONTRASTE_MIN := 4.5     # letra x placa (razão de contraste da WCAG)
+const CREME := Color("#f6ead0")
+const CARVAO := Color("#1f2622")
+const CORES_FLOR := [Color("#f4f1e8"), Color("#f2c94c"), Color("#e9889a")]
 
 
 static func padrao() -> Dictionary:
@@ -24,12 +35,94 @@ static func padrao() -> Dictionary:
 		"letreiro": "", "marca": "", "fonte": 0, "cor_texto": null,
 		"toldo": [Color("#2f6e4f"), Color("#f3efe2")], "vidro": Color(0.55, 0.7, 0.75, 0.32),
 		"andares": 1, "laterais": "reboco", "rodape": false, "calha": false, "degrau": false,
+		"cor_detalhe": null,        # cor dos detalhes pintados (batentes, molduras, cornija, floreiras); null = textura de madeira
+		"cor_placa": null,          # fundo do letreiro; null = cor dos detalhes (ou do toldo) bem escurecida
+		"cruz": false,              # cruz verde de farmácia
+		"placa_flux": false,        # usar a imagem do FLUX como placa (antiga; em perspectiva ela parece torta)
 	}
+
+
+## Dispersão do brilho entre as médias de 8 x 8 blocos: alta quando a textura tem um desenho grande repetido.
+static func padrao_decorativo(img: Image) -> float:
+	var w := img.get_width()
+	var h := img.get_height()
+	var medias: Array[float] = []
+	var passo := maxi(1, w / 256)
+	for by in 8:
+		for bx in 8:
+			var soma := 0.0
+			var k := 0
+			for y in range(by * h / 8, (by + 1) * h / 8, passo):
+				for x in range(bx * w / 8, (bx + 1) * w / 8, passo):
+					soma += img.get_pixel(x, y).get_luminance()
+					k += 1
+			medias.append(soma / maxi(k, 1))
+	var m := 0.0
+	for v in medias:
+		m += v
+	m /= medias.size()
+	var d := 0.0
+	for v in medias:
+		d += (v - m) * (v - m)
+	return sqrt(d / medias.size())
+
+
+## A textura (arquivo) tem padrão decorativo grande?
+static func tem_padrao(caminho: String) -> bool:
+	var img := Image.load_from_file(caminho)
+	return img != null and padrao_decorativo(img) > PADRAO_MAX
+
+
+## Razão de contraste (WCAG) entre duas cores.
+static func contraste(a: Color, b: Color) -> float:
+	var la := lum_rel(a)
+	var lb := lum_rel(b)
+	return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
+
+
+static func lum_rel(c: Color) -> float:
+	var r := 0.0
+	var pesos := [0.2126, 0.7152, 0.0722]
+	var canais := [c.r, c.g, c.b]
+	for i in 3:
+		var v: float = canais[i]
+		r += pesos[i] * (v / 12.92 if v <= 0.03928 else pow((v + 0.055) / 1.055, 2.4))
+	return r
+
+
+## Fundo e letra do letreiro: placa escura e letra creme, com contraste garantido.
+static func cores_letreiro(cfg: Dictionary) -> Array:
+	var base: Color = Color(cfg["toldo"][0])
+	if cfg.get("cor_placa") != null:
+		base = Color(cfg["cor_placa"])
+	elif cfg.get("cor_detalhe") != null:
+		base = Color(cfg["cor_detalhe"])
+	var placa := base
+	while lum_rel(placa) > 0.035 and placa.v > 0.05:
+		placa = placa.darkened(0.15)
+	var letra: Color = CREME if cfg.get("cor_texto") == null else Color(cfg["cor_texto"])
+	if contraste(placa, letra) < CONTRASTE_MIN:
+		placa = CARVAO
+		letra = CREME
+	return [placa, letra]
 
 
 static func montar(cfg_in: Dictionary) -> Node3D:
 	var cfg := padrao()
 	cfg.merge(cfg_in, true)
+	for k in ["porta", "vitrine"]:          # vindo de JSON: listas viram Vector2 e textos viram cores
+		if cfg[k] is Array:
+			cfg[k] = Vector2(cfg[k][0], cfg[k][1])
+	cfg["toldo"] = [Color(cfg["toldo"][0]), Color(cfg["toldo"][1])]
+	# paredes com padrão decorativo: o montador troca por reboco liso (e o relatório conta quais foram barradas)
+	var bloqueados: Array = []
+	var tex: Dictionary = cfg["texturas"]
+	for slot in ["tijolo", "reboco"]:
+		if tex.has(slot) and tem_padrao(tex[slot]):
+			bloqueados.append(slot)
+	cfg["_bloqueados"] = bloqueados
+	cfg["_cores_letreiro"] = cores_letreiro(cfg)
+	cfg["_cores_flor"] = CORES_FLOR
 	var W: float = cfg["largura"]
 	var H: float = cfg["altura"]                     # altura do térreo
 	var D: float = cfg["profundidade"]
@@ -42,6 +135,7 @@ static func montar(cfg_in: Dictionary) -> Node3D:
 	var ext: String = "tijolo" if cfg["laterais"] == "tijolo" else "reboco"   # acabamento de fora das laterais e do fundo
 	var raiz := Node3D.new()
 	raiz.name = "FachadaB"
+	raiz.set_meta("paredes_barradas", bloqueados)
 	var m := _Montador.new(cfg)
 	# --- parede da frente do térreo, recortada em colunas: vitrine | parede | porta | parede | vitrine
 	var vx0 := porta.x / 2.0 + 0.45                 # começo da vitrine (depois do batente)
@@ -125,14 +219,51 @@ static func montar(cfg_in: Dictionary) -> Node3D:
 		var ang := atan(DEGRAU / 0.6)
 		var xf := Transform3D(Basis(Vector3.RIGHT, ang), Vector3(0, DEGRAU / 2.0 - 0.05 * cos(ang), 0.3 - 0.05 * sin(ang)))
 		m.solido_girado(Vector3(porta.x + 0.5, 0.1, sqrt(0.36 + DEGRAU * DEGRAU)), xf)
+	# --- floreiras com plantas sob as vitrines (colidem: ninguém atravessa o canteiro)
+	for lado in [-1.0, 1.0]:
+		var xa: float = lado * vx0
+		var xb: float = lado * (vx0 + vit.x)
+		m.floreira(Vector3(minf(xa, xb) + 0.05, 0.0, 0.0), Vector3(maxf(xa, xb) - 0.05, minf(0.5, vy - 0.12), 0.38))
+	# --- placa de horário no vidro da vitrine da direita, na altura dos olhos (o jogo escreve OPEN/CLOSED e o horário)
+	var horario := m.caixa_solta("placa_horario", Vector3(0.86, 0.42, 0.012))
+	horario.name = "PlacaHorario"
+	horario.position = Vector3(vx0 + 0.1 + 0.43, vy + 0.85, -T * 0.45 + 0.012)
+	raiz.add_child(horario)
 	# --- toldo inclinado com listras + barrado
 	var aw := vx0 + vit.x + 0.15
 	m.toldo(Vector3(-aw, vy + vit.y + 0.35, 0.0), Vector3(aw, vy + vit.y - 0.15, 1.3))
-	# --- letreiro: a placa do FLUX (sem texto) e o nome escrito pelo Godot por cima
+	# --- letreiro: placa lisa e escura, paralela e encostada na parede, centrada sobre a porta, com moldura na cor dos
+	# detalhes; o nome é escrito pelo Godot por cima, em letra clara
 	var lw := minf(W * 0.62, 5.2)
 	var placa_lo := Vector3(-lw / 2, H - 1.35, 0.0)
 	var placa_hi := Vector3(lw / 2, H - 0.45, 0.1)
-	m.caixa("letreiro", placa_lo, placa_hi, false)
+	if cfg["placa_flux"] and cfg["letreiro"] != "":
+		m.caixa("letreiro", placa_lo, placa_hi, false)
+	else:
+		var placa := m.caixa_solta("placa", placa_hi - placa_lo)
+		placa.name = "Placa"
+		placa.position = (placa_lo + placa_hi) / 2.0
+		raiz.add_child(placa)
+		for y in [[placa_lo.y - 0.06, placa_lo.y], [placa_hi.y, placa_hi.y + 0.06]]:
+			m.caixa("madeira", Vector3(placa_lo.x - 0.06, y[0], 0.0), Vector3(placa_hi.x + 0.06, y[1], placa_hi.z + 0.02), false)
+		for x in [[placa_lo.x - 0.06, placa_lo.x], [placa_hi.x, placa_hi.x + 0.06]]:
+			m.caixa("madeira", Vector3(x[0], placa_lo.y, 0.0), Vector3(x[1], placa_hi.y, placa_hi.z + 0.02), false)
+	# --- cruz verde de farmácia, luminosa, entre o letreiro e o canto da fachada
+	if cfg["cruz"]:
+		var cx := (lw / 2.0 + 0.06 + W / 2.0) / 2.0
+		var tam := minf(0.9, W / 2.0 - lw / 2.0 - 0.3)
+		var cy := (placa_lo.y + placa_hi.y) / 2.0
+		var braco := tam / 3.0
+		m.caixa("cruz", Vector3(cx - tam / 2, cy - braco / 2, 0.0), Vector3(cx + tam / 2, cy + braco / 2, 0.08), false)
+		m.caixa("cruz", Vector3(cx - braco / 2, cy - tam / 2, 0.0), Vector3(cx + braco / 2, cy - braco / 2, 0.08), false)
+		m.caixa("cruz", Vector3(cx - braco / 2, cy + braco / 2, 0.0), Vector3(cx + braco / 2, cy + tam / 2, 0.08), false)
+		var brilho := OmniLight3D.new()
+		brilho.name = "LuzCruz"
+		brilho.position = Vector3(cx, cy, 0.5)
+		brilho.light_color = Color("#3ee07a")
+		brilho.omni_range = 1.6
+		brilho.light_energy = 0.6
+		raiz.add_child(brilho)
 	raiz.add_child(m.malha())
 	var texto := m.texto_letreiro(placa_lo, placa_hi)
 	if texto:
@@ -182,6 +313,33 @@ class _Montador:
 			mt.roughness = 0.5
 		elif nome == "letreiro" and cfg["letreiro"] != "":
 			mt.albedo_texture = _textura(cfg["letreiro"], false)
+		elif nome == "placa":
+			mt.albedo_color = cfg["_cores_letreiro"][0]
+			mt.roughness = 0.7
+		elif nome == "placa_horario":
+			mt.albedo_color = Color("#1f2622")
+			mt.roughness = 0.7
+		elif nome == "cruz":
+			mt.albedo_color = Color("#0b8a3a")
+			mt.emission_enabled = true
+			mt.emission = Color("#079a3a")
+			mt.emission_energy_multiplier = 0.45
+		elif nome == "terra":
+			mt.albedo_color = Color("#4a3426")
+		elif nome == "planta":
+			mt.albedo_color = Color("#3f8a3c")
+			mt.roughness = 0.8
+		elif nome.begins_with("flor"):
+			mt.albedo_color = cfg["_cores_flor"][int(nome.substr(4))]
+		elif nome == "madeira" and cfg["cor_detalhe"] != null:
+			mt.albedo_color = Color(cfg["cor_detalhe"])     # madeira pintada na cor dos detalhes da marca
+			mt.roughness = 0.75
+		elif (nome == "tijolo" or nome == "reboco") and nome in cfg["_bloqueados"]:
+			# parede com padrão decorativo repetido: barrada, vira reboco liso (ou a cor do reboco, se ele também tiver)
+			if nome == "tijolo" and tex.has("reboco") and not ("reboco" in cfg["_bloqueados"]):
+				mt.albedo_texture = _textura(tex["reboco"], true)
+			else:
+				mt.albedo_color = Color("#ece3cf")
 		elif nome == "toldo":
 			mt.albedo_texture = _listras(cfg["toldo"][0], cfg["toldo"][1])
 		elif tex.has(nome):
@@ -286,7 +444,8 @@ class _Montador:
 		var marca := String(cfg["marca"]).strip_edges()
 		if marca == "":
 			return null
-		material("letreiro")    # carrega a placa (e mede o quanto ela é clara)
+		if cfg["placa_flux"]:
+			material("letreiro")    # carrega a placa (e mede o quanto ela é clara)
 		var arquivo: String = FONTES[clampi(int(cfg["fonte"]), 0, FONTES.size() - 1)]
 		var pasta := "res://fontes" if FileAccess.file_exists("res://fontes/" + arquivo) else String(cfg.get("pasta_fontes", PASTA_FONTES))
 		var ff := FontFile.new()
@@ -304,10 +463,18 @@ class _Montador:
 		var mt := StandardMaterial3D.new()
 		mt.resource_name = "texto"
 		var cor = cfg["cor_texto"]
-		if cor == null:
-			cor = Color("#3a2414") if luminancia_placa > 0.5 else Color("#f6ead0")
+		if cfg["placa_flux"] and cfg["letreiro"] != "":
+			if cor == null:
+				cor = Color("#3a2414") if luminancia_placa > 0.5 else Color("#f6ead0")
+		else:
+			cor = cfg["_cores_letreiro"][1]
 		mt.albedo_color = Color(cor)
 		mt.roughness = 0.6
+		if not cfg["placa_flux"]:
+			# letreiro iluminado: a letra clara continua clara com a fachada na sombra
+			mt.emission_enabled = true
+			mt.emission = Color(cor)
+			mt.emission_energy_multiplier = 0.55
 		tm.material = mt
 		var mi := MeshInstance3D.new()
 		mi.name = "Letreiro"
@@ -402,6 +569,27 @@ class _Montador:
 			Vector2(0, 1), Vector2(faixas, 1), Vector2(faixas, 0), Vector2(0, 0))
 		quad("toldo", Vector3(b.x, b.y - 0.35, b.z - 0.01), Vector3(a.x, b.y - 0.35, b.z - 0.01), Vector3(a.x, b.y, b.z - 0.01), Vector3(b.x, b.y, b.z - 0.01), Vector3.FORWARD,
 			Vector2(faixas, 1), Vector2(0, 1), Vector2(0, 0), Vector2(faixas, 0))
+
+	## Floreira: caixa na cor dos detalhes, terra e uma fileira de plantas (folhagem em esferas achatadas e flores miúdas).
+	func floreira(lo: Vector3, hi: Vector3) -> void:
+		caixa("madeira", lo, hi, true)
+		caixa("terra", Vector3(lo.x + 0.04, hi.y - 0.04, lo.z + 0.04), Vector3(hi.x - 0.04, hi.y + 0.005, hi.z - 0.04), false)
+		var folha := SphereMesh.new()
+		folha.radial_segments = 8
+		folha.rings = 4
+		var flor := SphereMesh.new()
+		flor.radial_segments = 6
+		flor.rings = 3
+		var n := maxi(2, int((hi.x - lo.x) / 0.32))
+		var zc := (lo.z + hi.z) / 2.0
+		for i in n:
+			var x := lo.x + (i + 0.5) * (hi.x - lo.x) / n
+			var r := 0.15 + 0.015 * float((i * 7) % 3)
+			_st("planta").append_from(folha, 0, Transform3D(Basis.from_scale(Vector3(r * 2.4, r * 1.6, r * 1.9)), Vector3(x, hi.y + r * 0.45, zc)))
+			for k in 2:
+				var fx := x + (0.07 if k == 0 else -0.06)
+				var fz := zc + (0.06 if k == 0 else -0.05)
+				_st("flor%d" % ((i + k) % 3)).append_from(flor, 0, Transform3D(Basis.from_scale(Vector3.ONE * 0.09), Vector3(fx, hi.y + r * 1.15, fz)))
 
 	func caixa_solta(nome: String, tam: Vector3) -> MeshInstance3D:
 		var bm := BoxMesh.new()

@@ -105,5 +105,47 @@ func _rodar() -> void:
 		var cx := texto.global_transform * tm.get_aabb()
 		r["texto_na_placa"] = cx.size.x > 1.0 and cx.size.x < 5.2 and cx.position.y > 2.9 and cx.end.y < 4.1
 		r["texto_acento"] = tm.text == "Pão da Vila"
+	loja2.queue_free()
+	await physics_frame
+	# peças padrão: placa reta e encostada, letra contrastando, floreiras, placa de horário; farmácia com cruz; parede com padrão barrada
+	var pasta := ProjectSettings.globalize_path("user://teste_fachada")
+	DirAccess.make_dir_recursive_absolute(pasta)
+	var arcos := Image.create(256, 256, false, Image.FORMAT_RGB8)      # desenho grande (blocos de 64 px claros e escuros)
+	var tijolos := Image.create(256, 256, false, Image.FORMAT_RGB8)    # desenho miúdo (rejunte a cada 8 px)
+	for y in 256:
+		for x in 256:
+			arcos.set_pixel(x, y, Color(0.9, 0.9, 0.9) if ((x / 64) + (y / 64)) % 2 == 0 else Color(0.3, 0.3, 0.35))
+			tijolos.set_pixel(x, y, Color(0.4, 0.4, 0.4) if y % 8 == 0 or (x + (y / 8) * 16) % 32 == 0 else Color(0.85, 0.6, 0.45))
+	arcos.save_png(pasta.path_join("arcos.png"))
+	tijolos.save_png(pasta.path_join("tijolos.png"))
+	r["padrao_arcos"] = snappedf(F.padrao_decorativo(arcos), 0.001)
+	r["padrao_tijolos"] = snappedf(F.padrao_decorativo(tijolos), 0.001)
+	var loja3: Node3D = F.montar({"marca": "Greenleaf Drugstore", "cruz": true, "cor_detalhe": "#2f6e4f", "andares": 2,
+		"texturas": {"tijolo": pasta.path_join("arcos.png"), "reboco": pasta.path_join("tijolos.png")}})
+	root.add_child(loja3)
+	await physics_frame
+	r["parede_barrada"] = loja3.get_meta("paredes_barradas", []) == ["tijolo"]
+	var placa := loja3.get_node_or_null("Placa") as MeshInstance3D
+	var letra := loja3.get_node_or_null("Letreiro") as MeshInstance3D
+	r["placa_existe"] = placa != null and letra != null
+	if placa and letra:
+		var pb: AABB = placa.global_transform * placa.get_aabb()
+		var tb: AABB = letra.global_transform * (letra.mesh as TextMesh).get_aabb()
+		r["placa_paralela"] = placa.global_basis.z.dot(Vector3.BACK) > 0.9999 and letra.global_basis.z.normalized().dot(Vector3.BACK) > 0.9999
+		r["placa_encostada"] = absf(pb.position.z) < 0.005
+		r["placa_centrada"] = absf(pb.get_center().x) < 0.01 and absf(tb.get_center().x) < 0.05
+		r["texto_na_frente"] = tb.position.z >= pb.end.z - 0.001 and tb.position.x > pb.position.x and tb.end.x < pb.end.x and tb.position.y > pb.position.y and tb.end.y < pb.end.y
+		var cp: Color = (placa.mesh as BoxMesh).material.albedo_color
+		var ct: Color = (letra.mesh as TextMesh).material.albedo_color
+		r["contraste"] = snappedf(F.contraste(cp, ct), 0.1)
+	var nomes3 := []
+	var malha3: MeshInstance3D = loja3.get_node("Loja")
+	for sidx in malha3.mesh.get_surface_count():
+		nomes3.append(malha3.mesh.surface_get_material(sidx).resource_name)
+	r["floreiras_com_plantas"] = "planta" in nomes3 and "terra" in nomes3 and "flor0" in nomes3
+	r["cruz"] = "cruz" in nomes3 and loja3.get_node_or_null("LuzCruz") != null
+	r["sem_cruz_fora_da_farmacia"] = not ("cruz" in nomes)
+	var horario := loja3.get_node_or_null("PlacaHorario") as MeshInstance3D
+	r["placa_horario"] = horario != null and horario.position.x > 1.0 and horario.position.y > 1.2 and horario.position.y < 1.9
 	print("RELATORIO ", JSON.stringify(r))
 	quit()

@@ -166,16 +166,36 @@ The user gives the kind of shop (usually in Portuguese) and the invented brand n
 "parede": material of the front wall, a short English texture description of a PLAIN everyday material (e.g. "red brick wall with light gray mortar", "light blue painted wooden clapboard siding", "smooth sand colored stucco"); NEVER decorative patterns, tiles with motifs, arches, ornaments or murals,
 "lateral": material of the side walls, plain and smooth (e.g. "smooth cream painted stucco plaster wall"),
 "madeira": material of the trim and the panel under the windows (e.g. "dark green painted vertical wooden planks"),
+"cor_detalhe": one hex color for the painted details (door and window frames, cornice, planters, sign frame) that matches the brand (e.g. a green for a brand called Greenleaf),
 "piso": the floor inside (e.g. "warm honey colored wooden floor boards seen from above", "black and white checkered floor tiles"),
 "telhado": the flat roof seen from above (e.g. "dark gray asphalt roof shingles", "terracotta clay roof tiles", "gray concrete roof slab with tar seams"),
 "toldo": two hex colors for the striped awning, chosen for THIS shop and brand (a pet shop, a bakery and a bookstore must not share colors),
 "letreiro_fundo": the sign background color in English words,
-"letreiro_texto": the sign letters color in English words, with strong contrast to the background,
+"letreiro_texto": the sign letters color in English words, with strong contrast to the background (the sign is dark with light letters),
 "outras_palavras": up to 2 other common English words for this kind of shop, each with the Brazilian Portuguese word, e.g. [{"en": "drugstore", "pt": "drogaria"}] for a pharmacy, [{"en": "bistro", "pt": "bistrô"}] for a French restaurant (empty list if none),
 "detalhes": up to 3 small objects that THIS kind of shop would really put on the sidewalk in front of it, in Brazilian Portuguese (a pet shop: a water bowl for dogs, a bench; a bakery: a bread display, a small table; a flower shop: buckets of flowers).
 Every shop must look different: choose materials and colors that fit the kind of shop and the brand. Do not default to green.`;
 
 const HEX = /^#[0-9a-f]{6}$/i;
+
+// Palavras que levam o FLUX a desenhar padrões decorativos grandes na parede (arcos, ornamentos, mosaicos). As paredes têm de ser
+// de material comum e liso; a montagem no Godot ainda mede a textura e barra o que passar (fachada_b.gd, PADRAO_MAX).
+const DECORATIVOS = /\b(accents?|arch(es|ed)?|arcade|ornament(s|al|ed)?|decorat(ive|ions?|ed)|patterns?|patterned|motifs?|mosaics?|murals?|geometric|damask|moroccan|gothic|stencil(l?ed)?|tiles?|tiled|inlays?|trim|panels?|frames?|medallions?)\b/gi;
+export const PADRAO_MAX = 0.08;   // igual ao fachada_b.gd: dispersão das médias de 8 x 8 blocos da textura
+
+export function paredeLisa(texto) {
+  let limpo = String(texto ?? '').replace(DECORATIVOS, ' ').replace(/\s+,/g, ',').replace(/\s+/g, ' ').trim();
+  // "with dark gray" sobrando depois de tirar a palavra decorativa: só fica o "with ..." que fala do rejunte ou do veio
+  limpo = limpo.replace(/\s+(with|and)\s+([^,]*)$/i, (t, _w, resto) => (/(mortar|grout|seam|joint|grain|lines?)/i.test(resto) ? t : ''))
+    .replace(/\s+(with|and)$/i, '').replace(/[\s,]+$/, '').trim();
+  if (limpo.split(' ').length < 2) limpo = '';
+  return `${limpo || 'smooth cream painted stucco plaster wall'}, plain and uniform, no pattern`;
+}
+
+export function temPadrao(padrao) { return Number(padrao) > PADRAO_MAX; }
+
+// Farmácia ganha a cruz verde luminosa na fachada.
+export function ehFarmacia(tipoEn) { return /pharmac|drugstore|chemist|apothecary/i.test(String(tipoEn ?? '')); }
 
 export function marcaLimpa(m) {
   return String(m ?? '').replace(/["\\<>{}\[\]\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28);
@@ -192,13 +212,14 @@ export function normalizarFachada(bruto, tipo, marca) {
   return {
     tipo_en: textoLimpo(d.tipo_en, 40).toLowerCase() || 'shop', tipo_pt: textoLimpo(d.tipo_pt, 40).toLowerCase() || textoLimpo(tipo, 40).toLowerCase(),
     marca: marcaLimpa(marca), largura_m: +num(d.largura_m, 6, 10, 8).toFixed(1), altura_m: +num(d.altura_m, 4, 6, 4.4).toFixed(1),
-    parede: material(d.parede, 'red brick wall with light gray mortar'), lateral: material(d.lateral, 'smooth cream painted stucco plaster wall'),
+    parede: paredeLisa(material(d.parede, 'red brick wall with light gray mortar')), lateral: paredeLisa(material(d.lateral, 'smooth cream painted stucco plaster wall')),
     madeira: material(d.madeira, 'dark green painted vertical wooden planks'), piso: material(d.piso, 'warm honey colored wooden floor boards seen from above'),
     telhado: material(d.telhado, 'dark gray asphalt roof shingles seen from above'),
     outras_palavras: (Array.isArray(d.outras_palavras) ? d.outras_palavras : []).map((w) => ({ en: textoLimpo(w?.en, 40).toLowerCase(), pt: textoLimpo(w?.pt, 40).toLowerCase() }))
       .filter((w) => w.en && w.pt).slice(0, 3),
     ...(d.variacao && typeof d.variacao === 'object' ? { variacao: normalizarVariacao(d.variacao) } : {}),
-    toldo, letreiro_fundo: textoLimpo(d.letreiro_fundo, 30) || 'dark green', letreiro_texto: textoLimpo(d.letreiro_texto, 30) || 'cream', detalhes,
+    toldo, cor_detalhe: HEX.test(d.cor_detalhe) ? d.cor_detalhe : toldo[0],
+    letreiro_fundo: textoLimpo(d.letreiro_fundo, 30) || 'dark green', letreiro_texto: textoLimpo(d.letreiro_texto, 30) || 'cream', detalhes,
   };
 }
 
@@ -227,7 +248,8 @@ export const FONTES_LETREIRO = ['Lilita One', 'Pacifico', 'Alfa Slab One'];   //
 // Config que o Godot (tools/godot_limpeza/fachada_b.gd) usa para montar a loja. `fonte`: 0, 1 ou 2 (uma por variação).
 export function configFachada(plano, texturas, placa, fonte = 0) {
   const v = normalizarVariacao(plano.variacao || {});
-  return { largura: plano.largura_m, altura: plano.altura_m, texturas, letreiro: placa, marca: plano.marca, fonte, toldo: plano.toldo, ...v };
+  return { largura: plano.largura_m, altura: plano.altura_m, texturas, letreiro: placa, marca: plano.marca, fonte, toldo: plano.toldo, ...v,
+    cor_detalhe: HEX.test(plano.cor_detalhe) ? plano.cor_detalhe : null, cruz: ehFarmacia(plano.tipo_en) };
 }
 
 // Nome de arquivo seguro para exportar ao jogo (ex.: "cafe table" -> "cafe_table").

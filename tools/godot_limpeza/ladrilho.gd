@@ -2,7 +2,7 @@ extends SceneTree
 ## Texturas sem emenda (seamless) para o FLUX, em duas etapas:
 ##  preparar: desloca a imagem meia largura e meia altura (as bordas passam a ser o meio da imagem original,
 ##            que é contínuo ao repetir) e cria a máscara da cruz no meio, onde ficou a emenda. O FLUX repinta só a cruz.
-##  medir:    diferença média entre as bordas opostas (0 = repetir não mostra salto).
+##  medir:    diferença média entre as bordas opostas (0 = repetir não mostra salto) e o padrão decorativo da textura.
 ## godot --headless --path tools/godot_limpeza -s res://ladrilho.gd -- preparar <entrada.png> <deslocada.png> <mascara.png> [lado=1024]
 ## godot --headless --path tools/godot_limpeza -s res://ladrilho.gd -- medir <imagem.png>
 ## Escreve "RELATORIO {json}".
@@ -19,7 +19,9 @@ func _rodar() -> void:
 		if im == null:
 			_fim({"erro": "não consegui ler " + a[1]})
 			return
-		_fim({"emenda": snappedf(emenda(im), 0.0001), "emenda_relativa": snappedf(emenda_relativa(im), 0.01), "lado": im.get_width()})
+		# padrao: desenho grande repetido (arcos, ornamentos); acima de fachada_b.PADRAO_MAX a parede é barrada
+		_fim({"emenda": snappedf(emenda(im), 0.0001), "emenda_relativa": snappedf(emenda_relativa(im), 0.01), "lado": im.get_width(),
+			"padrao": snappedf(preload("fachada_b.gd").padrao_decorativo(im), 0.001)})
 		return
 	if a.size() >= 3 and a[0] == "mascara_fundo":
 		var im2 := Image.load_from_file(a[1])

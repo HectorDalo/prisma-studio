@@ -10,7 +10,7 @@ import { Tradutor, pareceportugues } from './lib/tradutor.mjs';
 import { Online, MODELOS_ONLINE } from './lib/online.mjs';
 import { Descritor } from './lib/descritor.mjs';
 import { Limpeza } from './lib/limpeza.mjs';
-import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, normalizarDescricao, LOTE_MAX, normalizarFachada, marcaLimpa, promptPlaca, configFachada, escolherVariacao, FONTES_LETREIRO } from './lib/estilo3d.mjs';
+import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, normalizarDescricao, LOTE_MAX, normalizarFachada, marcaLimpa, promptPlaca, configFachada, escolherVariacao, FONTES_LETREIRO, temPadrao } from './lib/estilo3d.mjs';
 import { Exportador } from './lib/exportar.mjs';
 import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { deveEncerrar } from './lib/vigia.mjs';
@@ -384,7 +384,7 @@ async function texturaSemEmenda(job, prompt, base, prefixo) {
   const depois = await limpeza.medirEmenda(arq('pronta'));
   const item = galeria.salvar({ buffer: readFileSync(arq('pronta')), ext: 'png', tipo: 'textura', params: {
     modelo: 'flux', prompt: completo, promptOriginal: prompt, semente: base, semEmenda: true, costurada,
-    emenda_relativa_antes: antes.emenda_relativa, emenda_relativa: depois.emenda_relativa } });
+    emenda_relativa_antes: antes.emenda_relativa, emenda_relativa: depois.emenda_relativa, padrao: depois.padrao } });
   for (const n of ['bruta', 'deslocada', 'mascara', 'pronta']) { try { unlinkSync(arq(n)); } catch { /* já foi */ } }
   return item;
 }
@@ -403,7 +403,13 @@ function criarFachada({ tipo, marca, detalhes, cor, semente: base, revisado = nu
     const slots = [['tijolo', plano.parede], ['reboco', plano.lateral], ['madeira', plano.madeira], ['piso', plano.piso], ['telhado', plano.telhado]];
     for (const [i, [slot, prompt]] of slots.entries()) {
       if (job.cancelado) return;
-      const item = await texturaSemEmenda(job, prompt, base + i * 11, `${prefixo}_${slot}`);
+      let item = await texturaSemEmenda(job, prompt, base + i * 11, `${prefixo}_${slot}`);
+      // parede com padrão decorativo grande (arcos, ornamentos): desenha de novo com outra semente, até 2 vezes;
+      // se ainda vier com padrão, a montagem no Godot troca por reboco liso
+      for (let t = 1; t <= 2 && (slot === 'tijolo' || slot === 'reboco') && temPadrao(item.params.padrao); t++) {
+        job.etapa = `A parede saiu com padrão decorativo: desenhando de novo (${t} de 2)…`;
+        item = await texturaSemEmenda(job, prompt, base + i * 11 + 500 * t, `${prefixo}_${slot}${t}`);
+      }
       job.itens.push(item);
       texturas[slot] = galeria.caminho(item.id);
       texturasIds[slot] = item.id;
@@ -481,7 +487,7 @@ rota('POST', '/api/galeria/:id/fachada', async (req, res, p) => {
   if (!item || pr.modelo !== 'fachada') return json(res, { erro: 'Esta não é uma fachada.' }, 400);
   const marca = b.marca === undefined ? pr.fachada.marca : marcaLimpa(b.marca);
   if (!marca) return json(res, { erro: 'Escreva o nome da marca.' }, 400);
-  const fachada = { ...pr.fachada, marca, ...(Array.isArray(b.outras_palavras) ? { outras_palavras: normalizarFachada({ outras_palavras: b.outras_palavras }, '', '').outras_palavras } : {}) };
+  const fachada = { ...pr.fachada, marca, ...(/^#[0-9a-f]{6}$/i.test(b.cor_detalhe ?? '') ? { cor_detalhe: b.cor_detalhe } : {}), ...(Array.isArray(b.outras_palavras) ? { outras_palavras: normalizarFachada({ outras_palavras: b.outras_palavras }, '', '').outras_palavras } : {}) };
   const i = pr.letreiro_escolhido || 0;
   const texturas = Object.fromEntries(Object.entries(pr.texturas || {}).map(([slot, id]) => [slot, galeria.caminho(id)]).filter(([, c]) => c));
   try {

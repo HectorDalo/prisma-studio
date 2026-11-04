@@ -81,7 +81,8 @@ func _rodar() -> void:
 				if mat == null or mat.albedo_color.a > 0.01:
 					no_arquivo["colisao_invisivel"] = false
 	_fim({"faces": faces, "faces_texto": letras, "bytes": FileAccess.get_file_as_bytes(a[1]).size(), "colisoes": n, "luz": luz != null,
-		"tamanho_m": [snappedf(caixa.size.x, 0.01), snappedf(caixa.size.y, 0.01), snappedf(caixa.size.z, 0.01)], "no_arquivo": no_arquivo})
+		"tamanho_m": [snappedf(caixa.size.x, 0.01), snappedf(caixa.size.y, 0.01), snappedf(caixa.size.z, 0.01)], "no_arquivo": no_arquivo,
+		"paredes_barradas": loja.get_meta("paredes_barradas", [])})
 
 
 func _fim(d: Dictionary) -> void:
