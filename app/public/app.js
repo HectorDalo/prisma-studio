@@ -42,10 +42,11 @@ const guardado = (() => { try { return JSON.parse(localStorage.getItem('prisma-f
 const form = {
   criar: { modelo: 'sdxl', prompt: '', negativo: '', formato: '1:1', quantidade: 1, passos: '', cfg: '', semente: '', ...guardado.criar },
   video: { modelo: 'ltx', prompt: '', formato: 'paisagem', quadros: 49, passos: '', semente: '', ...guardado.video },
+  '3d': { pedido: '', cor: 'textura', semente: '', ...guardado['3d'] },
 };
 const salvarForm = () => { try { localStorage.setItem('prisma-form', JSON.stringify(form)); } catch { /* sem armazenamento */ } };
 
-const sessao = { criar: [], video: [], fundo: { origem: null, entrada: null, cor: 'xadrez' }, ampliar: { origem: null, entrada: null, fator: 4 } };
+const sessao = { criar: [], video: [], '3d': [], fundo: { origem: null, entrada: null, cor: 'xadrez' }, ampliar: { origem: null, entrada: null, fator: 4 } };
 const estado = { vista: 'criar', status: null, catalogo: null, galeria: [] };
 
 // ---------------------------------------------------------------- trabalhos
@@ -81,12 +82,12 @@ async function tique() {
 
 function atualizarResultados() {
   const v = estado.vista;
-  if (v === 'criar' || v === 'video') montarGrade($('#resultados'), sessao[v]);
+  if (v === 'criar' || v === 'video' || v === '3d') montarGrade($('#resultados'), sessao[v]);
   else if (v === 'fundo' || v === 'ampliar') montarEdicao();
 }
 
 // ---------------------------------------------------------------- peças
-const ROTULOS = { imagem: 'Imagem', video: 'Vídeo', fundo: 'Sem fundo', ampliada: 'Ampliada' };
+const ROTULOS = { imagem: 'Imagem', video: 'Vídeo', fundo: 'Sem fundo', ampliada: 'Ampliada', '3d': '3D', textura: 'Textura' };
 
 function cartaoEspera(e) {
   const texto = e.estado === 'erro' ? (e.erro || 'Erro') : e.estado === 'cancelado' ? 'Cancelado'
@@ -97,12 +98,17 @@ function cartaoEspera(e) {
     ['na fila', 'executando'].includes(e.estado) ? h('div', { class: 'barra' }, barra) : null,
     ['na fila', 'executando'].includes(e.estado)
       ? h('button', { class: 'secundario', on: { click: () => postar(`/api/trabalhos/${e.jobId}/cancelar`).catch(() => {}) } }, 'Cancelar') : null,
-    e.estado === 'erro' || e.estado === 'cancelado' ? h('button', { class: 'secundario', on: { click: () => { for (const lista of [sessao.criar, sessao.video]) { const i = lista.indexOf(e); if (i >= 0) lista.splice(i, 1); } atualizarResultados(); } } }, 'Remover') : null,
+    e.estado === 'erro' || e.estado === 'cancelado' ? h('button', { class: 'secundario', on: { click: () => { for (const lista of [sessao.criar, sessao.video, sessao['3d']]) { const i = lista.indexOf(e); if (i >= 0) lista.splice(i, 1); } atualizarResultados(); } } }, 'Remover') : null,
   );
 }
 
 function midia(item) {
   const url = `/api/galeria/${item.id}/arquivo`;
+  if (item.tipo === '3d') {          // na grade, a imagem que deu origem ao modelo (leve); o 3D abre no visualizador
+    const v = item.params?.vocab;
+    return h('div', { class: 'capa3d' }, item.params?.previa ? h('img', { src: `/api/galeria/${item.params.previa}/arquivo`, loading: 'lazy', alt: v?.en || '3D' }) : null,
+      v ? h('span', { class: 'nome3d' }, v.en, h('small', {}, v.pt)) : null);
+  }
   return item.tipo === 'video'
     ? h('video', { src: url, muted: true, loop: true, autoplay: true, playsInline: true })
     : h('img', { src: url, loading: 'lazy', alt: item.params?.prompt || ROTULOS[item.tipo] });
@@ -142,10 +148,20 @@ function abrirLuz(item, aoMudar) {
   const par = (k, v) => { if (v !== undefined && v !== '' && v !== null) linhas.push(h('dt', {}, k), h('dd', {}, String(v))); };
   par('Tipo', ROTULOS[item.tipo]); par('Modelo', p.modelo); par('Tamanho', p.largura ? `${p.largura}×${p.altura}` : null);
   par('Passos', p.passos); par('Guia (cfg)', p.cfg); par('Semente', p.semente); par('Quadros', p.quadros); par('Fator', p.fator ? p.fator + '×' : null);
+  if (item.tipo === '3d') {
+    const v = p.vocab || {};
+    const m = v.medidas_m;
+    par('Inglês', v.en); par('Português', v.pt); par('Categoria', v.categoria);
+    par('Medidas reais', m ? `${m.largura} × ${m.profundidade} × ${m.altura} m (L × P × A)` : null);
+    par('Peso', p.tamanho ? `${p.tamanho} · ${Number(p.faces).toLocaleString('pt-BR')} faces` : null);
+    par('Arquivo', p.bytes ? `${(p.bytes / 1024 / 1024).toFixed(1)} MB` : null);
+    par('Cor', p.cor === 'vertices' ? 'por vértice' : 'textura');
+    par('Cenário', p.lote);
+  }
   par('Criada em', new Date(item.criadoEm).toLocaleString('pt-BR'));
   const url = `/api/galeria/${item.id}/arquivo`;
   const acao = (rotulo, fn, extra = '') => h('button', { class: 'secundario ' + extra, on: { click: fn } }, rotulo);
-  const ehImagem = item.tipo !== 'video';
+  const ehImagem = item.tipo !== 'video' && item.tipo !== '3d';
   const botoes = [
     h('a', { class: 'secundario', href: url, download: `prisma-${item.id}.${item.arquivo.split('.').pop()}`, style: 'text-decoration:none;text-align:center' }, 'Baixar'),
     acao(item.favorita ? '♥ Favorita' : '♡ Favoritar', async (ev) => {
@@ -153,7 +169,14 @@ function abrirLuz(item, aoMudar) {
       item.favorita = novo.favorita; ev.target.textContent = item.favorita ? '♥ Favorita' : '♡ Favoritar';
     }),
   ];
-  if (item.tipo === 'imagem' || item.tipo === 'video') botoes.push(acao('Usar de novo', () => { reutilizar(item); fechar(); }));
+  if (item.tipo === '3d') {
+    botoes.unshift(acao('Exportar para o EnglishQuest', async (ev) => {
+      const b = ev.target; b.disabled = true;
+      try { const r = await postar(`/api/galeria/${item.id}/exportar`); aviso(`Exportado: assets/prisma/${r.nome}.glb e ${r.nome}.json`); b.textContent = '✓ Exportado'; }
+      catch (e) { aviso(e.message, true); b.disabled = false; }
+    }, 'destaque'));
+  }
+  if (['imagem', 'video', '3d'].includes(item.tipo) && !p.para3d) botoes.push(acao('Usar de novo', () => { reutilizar(item); fechar(); }));
   if (ehImagem) {
     botoes.push(acao('Remover fundo', () => { fechar(); irPara('fundo', { galeriaId: item.id }); }));
     botoes.push(acao('Ampliar', () => { fechar(); irPara('ampliar', { galeriaId: item.id }); }));
@@ -162,15 +185,18 @@ function abrirLuz(item, aoMudar) {
   botoes.push(acao('Excluir', async () => {
     if (!confirm('Excluir este arquivo da galeria? Não dá para desfazer.')) return;
     await api('/api/galeria/' + item.id, { method: 'DELETE' });
-    for (const lista of [sessao.criar, sessao.video]) for (const e of lista) if (e.itens) e.itens = e.itens.filter((i) => i.id !== item.id), e.nos = null;
+    for (const lista of [sessao.criar, sessao.video, sessao['3d']]) for (const e of lista) if (e.itens) e.itens = e.itens.filter((i) => i.id !== item.id), e.nos = null;
     fechar(); if (estado.vista === 'galeria') renderGaleria(); else atualizarResultados();
   }, 'perigo'));
   luz.hidden = false;
   luz.replaceChildren(
     h('button', { class: 'fechar', on: { click: fechar }, title: 'Fechar (Esc)' }, '✕'),
     h('div', { class: 'palco' + (item.tipo === 'fundo' ? ' xadrez' : ''), on: { click: (ev) => { if (ev.target.classList.contains('palco')) fechar(); } } },
-      item.tipo === 'video' ? h('video', { src: url, controls: true, autoplay: true, loop: true }) : h('img', { src: url, alt: p.prompt || '' })),
-    h('aside', {}, h('h2', { style: 'margin:0' }, ROTULOS[item.tipo] || 'Arquivo'),
+      item.tipo === 'video' ? h('video', { src: url, controls: true, autoplay: true, loop: true })
+        : item.tipo === '3d' ? h('model-viewer', { src: url, 'camera-controls': true, 'auto-rotate': true, 'shadow-intensity': '1', exposure: '1.1', 'environment-image': 'neutral', 'interaction-prompt': 'none', alt: p.vocab?.en || 'modelo 3D' })
+          : h('img', { src: url, alt: p.prompt || '' })),
+    h('aside', {}, h('h2', { style: 'margin:0' }, item.tipo === '3d' && p.vocab ? p.vocab.en : ROTULOS[item.tipo] || 'Arquivo'),
+      p.pedido ? h('p', {}, h('b', {}, 'Seu pedido: '), p.pedido) : null,
       p.promptOriginal ? h('p', {}, h('b', {}, 'Seu texto: '), p.promptOriginal) : null,
       p.prompt ? h('p', {}, p.promptOriginal ? h('b', {}, 'Prompt usado (inglês): ') : null, p.prompt) : null,
       h('dl', {}, ...linhas), h('div', { class: 'barra-acoes', style: 'flex-direction:column' }, ...botoes)),
@@ -179,6 +205,8 @@ function abrirLuz(item, aoMudar) {
 
 function reutilizar(item) {
   const p = item.params || {};
+  if (item.tipo === '3d' && p.fachada) { Object.assign(form['3d'], { modo: 'fachada', tipo: p.fachada.tipo_pt, marca: p.fachada.marca, semente: '' }); irPara('3d'); return; }
+  if (item.tipo === '3d') { Object.assign(form['3d'], { modo: 'um', pedido: p.pedido || '', cor: p.cor || 'textura', semente: p.semente ?? '' }); irPara('3d'); return; }
   if (item.tipo === 'imagem') {
     Object.assign(form.criar, { modelo: p.modelo, prompt: p.promptOriginal || p.prompt, negativo: p.negativo || '', passos: p.passos, cfg: p.cfg, semente: p.semente, quantidade: 1 });
     const f = Object.entries(FORMATOS_IMAGEM).find(([, d]) => d[0] === p.largura && d[1] === p.altura);
@@ -335,6 +363,92 @@ function renderVideo() {
   }
 }
 
+// ---------------------------------------------------------------- vista: criar 3D
+function render3d() {
+  const f = form['3d'];
+  const raiz = h('div', {});
+  const pronto = estado.status?.modelos?.['3d'] !== false;
+  const lote = () => f.modo === 'lote';
+  const fach = () => f.modo === 'fachada';
+  const campoTipo = h('input', { type: 'text', placeholder: 'Ex.: café, padaria, loja de pets', value: f.tipo || '', on: { input: (e) => { f.tipo = e.target.value; salvarForm(); } } });
+  const campoMarca = h('input', { type: 'text', maxLength: 28, placeholder: 'Ex.: Hazelbrook Coffee (invente um nome)', value: f.marca || '', on: { input: (e) => { f.marca = e.target.value; salvarForm(); } } });
+  const campoDetalhes = h('label', { class: 'marca-check' }, h('input', { type: 'checkbox', checked: f.detalhes !== false, on: { change: (e) => { f.detalhes = e.target.checked; salvarForm(); } } }), 'Criar também os detalhes da calçada (mesinhas, vasos, placa) no TRELLIS.2');
+  const blocoFachada = h('div', {},
+    h('div', { class: 'campo' }, h('label', {}, 'Tipo de loja'), campoTipo),
+    h('div', { class: 'campo' }, h('label', {}, 'Nome da marca'), campoMarca,
+      h('div', { class: 'dica' }, 'Invente o nome (nada de marca real). O FLUX escreve no letreiro; nomes curtos saem com menos erro.')),
+    h('div', { class: 'campo' }, campoDetalhes));
+  const dicaPeso = h('div', { class: 'dica', style: 'margin:0' });
+  const blocoCor = h('div', { class: 'campo' });
+  const area = h('textarea', { rows: 3, value: lote() ? (f.lista || '') : f.pedido, on: { input: (e) => { if (lote()) f.lista = e.target.value; else f.pedido = e.target.value; salvarForm(); contar(); } } });
+  const rotuloArea = h('label', {});
+  const dicaArea = h('div', { class: 'dica' });
+  const botao = h('button', { class: 'principal', disabled: !pronto, on: { click: criar } }, 'Criar modelo 3D');
+  // conta os itens do lote como o servidor conta (vírgula, ponto e vírgula ou linha; "cenário:" no começo)
+  const itensLote = (t) => { let s = String(t || ''); const i = s.indexOf(':'); if (i > 0 && i < 60 && !/[,;\n]/.test(s.slice(0, i))) s = s.slice(i + 1); return [...new Set(s.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))]; };
+  function contar() {
+    if (fach()) { botao.textContent = 'Criar fachada'; return; }
+    if (!lote()) { botao.textContent = 'Criar modelo 3D'; return; }
+    const n = Math.min(20, itensLote(f.lista).length);
+    botao.textContent = n > 1 ? `Criar ${n} modelos 3D` : 'Criar modelo 3D';
+    dicaArea.textContent = n ? `${n} ${n === 1 ? 'objeto' : 'objetos'} na fila, um de cada vez (até 20). Cada um leva de 8 a 25 minutos.` : 'Separe os objetos por vírgula. O cenário antes dos dois-pontos ajuda o qwen a acertar o tipo.';
+  }
+  function pintarModo() {
+    rotuloArea.textContent = lote() ? 'Lista de objetos' : 'O que você quer criar';
+    area.placeholder = lote() ? 'Ex.: loja de pets: cachorro, gato, aquário, ração, coleira' : 'Ex.: uma mesa de café redonda de madeira';
+    area.value = lote() ? (f.lista || '') : f.pedido;
+    dicaArea.textContent = 'Um objeto por vez. Pode escrever em português: o qwen da Elara descreve o objeto com as medidas reais.';
+    campoTexto.hidden = fach(); blocoFachada.hidden = !fach(); blocoCor.hidden = fach() && f.detalhes === false;
+    dicaPeso.textContent = fach() ? 'Loja montada por peças: ~350 faces e ~1,5 MB, com porta de verdade (dá para entrar) e colisão. Cerca de 8 minutos (os detalhes vão depois, na fila).'
+      : 'Automático pelo tamanho real: pequeno ~3 mil faces, médio ~10 mil, grande ou veículo ~30 mil.';
+    contar();
+  }
+  const campoTexto = h('div', { class: 'campo' }, rotuloArea, area, dicaArea);
+  blocoCor.append(h('span', { class: 'rotulo' }, 'Cor'),
+    fichas([['textura', 'Textura'], ['vertices', 'Cor por vértice']], f.cor, (v) => { f.cor = v; salvarForm(); }),
+    h('div', { class: 'dica' }, 'Textura: mais detalhe. Cor por vértice: arquivo menor, cores mais chapadas.'));
+  campoDetalhes.querySelector('input').addEventListener('change', pintarModo);
+  const painel = h('div', { class: 'cartao' },
+    h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'O que criar'),
+      fichas([['um', 'Um objeto'], ['lote', 'Lista (lote)'], ['fachada', 'Fachada de loja']], f.modo || 'um', (v) => { f.modo = v; salvarForm(); pintarModo(); })),
+    campoTexto, blocoFachada, blocoCor,
+    h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Estilo'),
+      h('div', { class: 'travado' }, h('b', {}, 'EnglishQuest'), ' · low poly, cores chapadas e foscas, sem texto (combina com os assets do jogo)')),
+    h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Peso'), dicaPeso),
+    h('details', {}, h('summary', {}, 'Ajustes avançados'), h('div', { class: 'campo' }, h('label', {}, 'Semente (vazio = aleatória)'),
+      h('input', { type: 'text', inputMode: 'numeric', value: f.semente, placeholder: 'aleatória', on: { input: (e) => { f.semente = e.target.value.replace(/\D/g, ''); salvarForm(); } } }))),
+    botao,
+    pronto ? h('div', { class: 'dica' }, 'Leva de 8 a 25 minutos por modelo na RTX 2070. Pode deixar vários na fila.')
+      : h('div', { class: 'dica', style: 'color:var(--erro)' }, 'Faltam arquivos: TRELLIS.2, FLUX, o Ollama da Elara ou o Godot.'));
+  pintarModo();
+  raiz.append(h('h1', {}, 'Criar 3D'), h('p', { class: 'sub' }, 'Modelos 3D (.glb) prontos para o Godot, no tamanho real e com a base no chão: descrição com medidas, imagem no FLUX, fundo removido e modelo no TRELLIS.2. Tudo no seu computador.'),
+    h('div', { class: 'vista' }, painel, h('div', { id: 'resultados' })));
+  return raiz;
+
+  async function criar() {
+    const semente = f.semente === '' ? null : Number(f.semente);
+    if (fach()) {
+      if (!String(f.tipo || '').trim() || !String(f.marca || '').trim()) return aviso('Escreva o tipo de loja e o nome da marca.', true);
+      botao.disabled = true;
+      try {
+        const r = await postar('/api/fachada', { tipo: f.tipo, marca: f.marca, detalhes: f.detalhes !== false, cor: f.cor, semente });
+        for (const id of r.trabalhos) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }
+        atualizarResultados();
+      } catch (e) { aviso(e.message, true); } finally { botao.disabled = !pronto; }
+      return;
+    }
+    if (lote() ? !itensLote(f.lista).length : !f.pedido.trim()) return aviso(lote() ? 'Escreva a lista de objetos.' : 'Descreva o objeto.', true);
+    botao.disabled = true;
+    try {
+      const r = lote() ? await postar('/api/3d/lote', { lista: f.lista, cor: f.cor, semente }) : await postar('/api/3d', { pedido: f.pedido, cor: f.cor, semente });
+      for (const id of [...r.trabalhos].reverse()) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }   // em cima, na ordem da lista
+      if (r.cortados) aviso(`Só os 20 primeiros foram para a fila (${r.cortados} ficaram de fora).`, true);
+      else if (lote()) aviso(`${r.trabalhos.length} modelos na fila${r.contexto ? ' para ' + r.contexto : ''}.`);
+      atualizarResultados();
+    } catch (e) { aviso(e.message, true); } finally { botao.disabled = !pronto; }
+  }
+}
+
 // ---------------------------------------------------------------- vistas: remover fundo e ampliar
 async function enviarEntrada(arquivo) {
   const r = await fetch('/api/entrada', { method: 'POST', headers: { 'Content-Type': arquivo.type || 'image/png' }, body: arquivo });
@@ -423,7 +537,7 @@ function renderEdicao(modo) {
 }
 
 // ---------------------------------------------------------------- vista: galeria
-const FILTROS = [['todas', 'Tudo'], ['imagem', 'Imagens'], ['video', 'Vídeos'], ['fundo', 'Sem fundo'], ['ampliada', 'Ampliadas'], ['favoritas', 'Favoritas']];
+const FILTROS = [['todas', 'Tudo'], ['imagem', 'Imagens'], ['video', 'Vídeos'], ['3d', '3D'], ['fundo', 'Sem fundo'], ['ampliada', 'Ampliadas'], ['favoritas', 'Favoritas']];
 let filtroGaleria = 'todas';
 
 async function renderGaleria() {
@@ -476,6 +590,7 @@ function irPara(vista, origem) {
   if (!estado.catalogo) { raiz.replaceChildren(h('p', { class: 'sub' }, 'Carregando…')); return; }
   if (vista === 'criar') { raiz.replaceChildren(renderCriar()); atualizarResultados(); }
   else if (vista === 'video') { raiz.replaceChildren(renderVideo()); atualizarResultados(); }
+  else if (vista === '3d') { raiz.replaceChildren(render3d()); atualizarResultados(); }
   else { raiz.replaceChildren(renderEdicao(vista)); if (origem) { sessao[vista].origem = origem; sessao[vista].entrada = null; } montarEdicao(); if (origem) $('#edicao button.principal')?.click(); }
 }
 
@@ -509,7 +624,7 @@ async function atualizarStatus() {
 async function iniciar() {
   estado.catalogo = await api('/api/modelos');
   await atualizarStatus();
-  irPara(['criar', 'video', 'fundo', 'ampliar', 'galeria'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'criar');
+  irPara(['criar', 'video', '3d', 'fundo', 'ampliar', 'galeria'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'criar');
   postar('/api/motor/iniciar').catch(() => {});
   setInterval(atualizarStatus, 3000);
   setInterval(() => postar('/api/ping').catch(() => {}), 5000);

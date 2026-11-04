@@ -4,6 +4,7 @@ Estúdio local de imagens e vídeos com IA para Windows. Tudo roda no seu comput
 
 - **Criar imagem** (SDXL e FLUX.1 schnell), **criar vídeo** (LTX-Video, texto ou imagem para vídeo), **remover fundo** (BiRefNet), **ampliar** até 4× (Real-ESRGAN) e **galeria** local.
 - Pode escrever em português: um modelo pequeno (Qwen2.5 1.5B), também local, traduz o texto para o inglês antes de gerar, e você pode revisar a tradução.
+- **Criar 3D**: modelos `.glb` prontos para o Godot (feito para o EnglishQuest). O qwen2.5:7b da Elara Voz (Ollama portátil, `D:\Claude\elara-voz`) descreve o objeto com as medidas reais, o FLUX desenha no estilo travado do EnglishQuest (low poly, cores chapadas), o BiRefNet tira o fundo, o TRELLIS.2 faz o modelo (textura ou cor por vértice) e o Godot, sem tela, ajusta a escala real e põe a base no chão. Peso pelo tamanho: pequeno ~3 mil faces, médio ~10 mil, grande ou veículo ~30 mil. Leva de 8 a 25 minutos por modelo na RTX 2070. `node tools/teste_3d.mjs` testa as regras, o fluxo e a limpeza.
 - Janela própria (`Prisma.exe` abre o Edge em modo aplicativo); ao fechar a janela, o motor desliga e libera a placa de vídeo.
 
 ![Galeria do Prisma Studio](docs/galeria.png)

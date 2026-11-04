@@ -1,0 +1,5 @@
+; Projeto mínimo do Godot usado só para limpar os .glb do "Criar 3D" (escala, origem, exportação). Roda sem tela.
+config_version=5
+
+[application]
+config/name="Prisma limpeza 3D"

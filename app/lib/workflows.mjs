@@ -33,7 +33,15 @@ export const MODELOS_VIDEO = {
   },
 };
 
-const NEGATIVO_PADRAO = 'blurry, low quality, deformed, bad anatomy, extra fingers, text, watermark';
+// Criar 3D: FLUX (imagem) -> BiRefNet + TRELLIS.2 (modelo). Testado na RTX 2070 de 8 GB (~6 GB de VRAM, 8 a 25 min por modelo).
+export const MODELO_3D = {
+  id: 'trellis2',
+  nome: 'TRELLIS.2 · imagem para 3D',
+  arquivos: ['diffusion_models/trellis_2_int8_convrot.safetensors', 'vae/trellis_2_shape_vae_bf16.safetensors',
+    'vae/trellis_2_texture_vae_bf16.safetensors', 'clip_vision/dino_v3_vit_l.safetensors', 'background_removal/birefnet.safetensors'],
+};
+
+const NEGATIVO_PADRAO ='blurry, low quality, deformed, bad anatomy, extra fingers, text, watermark';
 
 export function sdxl({ prompt, negativo, largura, altura, passos, cfg, semente, prefixo }) {
   return {
@@ -123,6 +131,75 @@ export function ltxImagem({ imagem, prompt, negativo, largura, altura, quadros, 
     13: { class_type: 'CreateVideo', inputs: { images: ['12', 0], fps: 24.0 } },
     14: { class_type: 'SaveVideo', inputs: { video: ['13', 0], filename_prefix: prefixo, format: 'mp4', codec: 'h264' } },
   };
+}
+
+// Textura sem emenda: a imagem já deslocada meia volta (bordas contínuas) tem a emenda numa cruz no meio;
+// o FLUX repinta só a cruz (máscara) e o resto volta exatamente como era (as bordas continuam batendo ao repetir).
+export function fluxCostura({ imagem, mascara, prompt, semente, prefixo, forca = 0.65 }) {
+  return {
+    1: { class_type: 'UnetLoaderGGUF', inputs: { unet_name: 'flux1-schnell-Q4_K_S.gguf' } },
+    2: { class_type: 'DualCLIPLoader', inputs: { clip_name1: 't5xxl_fp8_e4m3fn.safetensors', clip_name2: 'clip_l.safetensors', type: 'flux' } },
+    3: { class_type: 'VAELoader', inputs: { vae_name: 'ae.safetensors' } },
+    4: { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['2', 0] } },
+    5: { class_type: 'LoadImage', inputs: { image: imagem } },
+    6: { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['3', 0] } },
+    7: { class_type: 'LoadImageMask', inputs: { image: mascara, channel: 'red' } },
+    8: { class_type: 'SetLatentNoiseMask', inputs: { samples: ['6', 0], mask: ['7', 0] } },
+    9: { class_type: 'KSampler', inputs: { model: ['1', 0], seed: semente, steps: 4, cfg: 1.0, sampler_name: 'euler', scheduler: 'simple', positive: ['4', 0], negative: ['4', 0], latent_image: ['8', 0], denoise: forca } },
+    10: { class_type: 'VAEDecode', inputs: { samples: ['9', 0], vae: ['3', 0] } },
+    11: { class_type: 'ImageCompositeMasked', inputs: { destination: ['5', 0], source: ['10', 0], x: 0, y: 0, resize_source: false, mask: ['7', 0] } },
+    12: { class_type: 'SaveImage', inputs: { filename_prefix: prefixo, images: ['11', 0] } },
+  };
+}
+
+// Imagem -> modelo 3D (.glb) com o TRELLIS.2 nativo do ComfyUI 0.43. Mesmos ajustes do fluxo oficial (CFG e etapas),
+// com o upsample em 1024 para caber em 8 GB. `cor`: 'textura' (cor numa imagem, UV) ou 'vertices' (cor em cada vértice, mais leve).
+// `mascara` (opcional): máscara pronta do objeto (branco = objeto) no lugar do BiRefNet. Serve para prédios: o BiRefNet
+// trata a parede lisa como fundo e o TRELLIS.2 faz só porta, janelas e toldo.
+export function trellis3d({ imagem, faces, textura, cor, semente, prefixo, mascara = null }) {
+  const n = (class_type, inputs) => ({ class_type, inputs });
+  const wf = {
+    img: n('LoadImage', { image: imagem }),
+    ...(mascara ? { bg: n('LoadImageMask', { image: mascara, channel: 'red' }) } : {
+      bgm: n('LoadBackgroundRemovalModel', { bg_removal_name: 'birefnet.safetensors' }),
+      bg: n('RemoveBackground', { bg_removal_model: ['bgm', 0], image: ['img', 0] }),
+    }),
+    crop: n('ImageCropToMask', { images: ['img', 0], masks: ['bg', 0], width: 1024, height: 1024, pad_factor: 1.1, grow_mask: 0, background: '#000000' }),
+    cv: n('CLIPVisionLoader', { clip_name: 'dino_v3_vit_l.safetensors' }),
+    unet: n('UNETLoader', { unet_name: 'trellis_2_int8_convrot.safetensors', weight_dtype: 'default' }),
+    svae: n('VAELoader', { vae_name: 'trellis_2_shape_vae_bf16.safetensors' }),
+    tvae: n('VAELoader', { vae_name: 'trellis_2_texture_vae_bf16.safetensors' }),
+    cond: n('Trellis2Conditioning', { clip_vision_model: ['cv', 0], image: ['crop', 0] }),
+    cfgA: n('CFGOverride', { model: ['unet', 0], cfg: 1.0, start_percent: 0.667, end_percent: 1.0 }),
+    resA: n('RescaleCFG', { model: ['cfgA', 0], multiplier: 0.7 }),
+    msA: n('ModelSamplingSD3', { model: ['resA', 0], shift: 5.0 }),
+    cfgB: n('CFGOverride', { model: ['unet', 0], cfg: 1.0, start_percent: 0.769, end_percent: 1.0 }),
+    resB: n('RescaleCFG', { model: ['cfgB', 0], multiplier: 0.5 }),
+    lat0: n('EmptyTrellis2LatentStructure', { batch_size: 1 }),
+    ks1: n('KSampler', { model: ['msA', 0], seed: semente, steps: 12, cfg: 7.5, sampler_name: 'euler', scheduler: 'normal', positive: ['cond', 0], negative: ['cond', 1], latent_image: ['lat0', 0], denoise: 1.0 }),
+    struct: n('VaeDecodeStructureTrellis2', { samples: ['ks1', 0], vae: ['svae', 0], resolution: '32' }),
+    shape: n('Trellis2ShapeStage', { positive: ['cond', 0], negative: ['cond', 1], voxel: ['struct', 0] }),
+    ks2: n('KSampler', { model: ['resB', 0], seed: semente + 1, steps: 20, cfg: 7.5, sampler_name: 'euler', scheduler: 'normal', positive: ['shape', 0], negative: ['shape', 1], latent_image: ['shape', 2], denoise: 1.0 }),
+    up: n('Trellis2UpsampleStage', { positive: ['shape', 0], negative: ['shape', 1], shape_latent: ['ks2', 0], vae: ['svae', 0], target_resolution: 1024 }),
+    ks3: n('KSampler', { model: ['resB', 0], seed: semente + 1, steps: 12, cfg: 7.5, sampler_name: 'euler', scheduler: 'simple', positive: ['up', 0], negative: ['up', 1], latent_image: ['up', 2], denoise: 1.0 }),
+    mesh: n('VaeDecodeShapeTrellis', { samples: ['ks3', 0], vae: ['svae', 0] }),
+    tex: n('Trellis2TextureStage', { positive: ['up', 0], negative: ['up', 1], shape_latent: ['ks3', 0] }),
+    ks4: n('KSampler', { model: ['unet', 0], seed: semente + 2, steps: 12, cfg: 1.0, sampler_name: 'euler', scheduler: 'normal', positive: ['tex', 0], negative: ['tex', 1], latent_image: ['tex', 2], denoise: 1.0 }),
+    vox: n('VaeDecodeTextureTrellis', { samples: ['ks4', 0], vae: ['tvae', 0], shape_subdivides: ['mesh', 1] }),
+    remesh: n('RemeshMesh', { mesh: ['mesh', 0], resolution: 512, sign_mode: 'solid', 'sign_mode.fill': 20.0, 'sign_mode.qef': false, band: 1.0, project_back: 0.0, fix_poles: false, smooth_iters: 0, drop_small_components: 0.01, precluster_max_verts: 20000000 }),
+    dec: n('DecimateMesh', { mesh: ['remesh', 0], target_face_count: faces, placement_mode: 'midpoint' }),
+    smooth: n('MeshSmoothNormals', { mesh: ['dec', 0], crease_angle: 60.0 }),
+  };
+  if (cor === 'vertices') {
+    wf.paint = n('PaintMesh', { mesh: ['smooth', 0], voxel_colors: ['vox', 0] });
+    wf.save = n('SaveGLB', { mesh: ['paint', 0], filename_prefix: prefixo });
+  } else {
+    wf.uv = n('UnwrapMesh', { mesh: ['smooth', 0], segmenter: 'pec', resolution: textura, padding: 2, weld_distance: 0.0002 });
+    wf.bake = n('BakeTextureFromVoxel', { mesh: ['uv', 0], voxel_colors: ['vox', 0], texture_size: textura, reference_mesh: ['mesh', 0] });
+    wf.apply = n('ApplyTextureToMesh', { mesh: ['uv', 0], base_color: ['bake', 0], metallic: ['bake', 1], roughness: ['bake', 2] });
+    wf.save = n('SaveGLB', { mesh: ['apply', 0], filename_prefix: prefixo });
+  }
+  return wf;
 }
 
 export function wanTexto({ prompt, negativo, largura, altura, quadros, passos, semente, prefixo }) {

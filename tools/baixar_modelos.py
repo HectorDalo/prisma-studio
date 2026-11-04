@@ -4,7 +4,8 @@
 - Confere o SHA-256 informado pelo Hugging Face antes de aceitar o arquivo (o arquivo só ganha o nome final depois).
 - Pode ser rodado de novo: o que já está completo e conferido é pulado.
 
-Uso: python baixar_modelos.py [grupo ...]   grupos: imagem, flux, fundo, traducao, ampliar, video, ltx (sem argumentos: todos)
+Uso: python baixar_modelos.py [grupo ...]   grupos: imagem, flux, fundo, 3d, traducao, ampliar, video, ltx (sem argumentos: todos)
+3d = TRELLIS.2 int8 (~8,3 GB; o Criar 3D também precisa de flux, fundo, do Ollama da Elara e do Godot do EnglishQuest)
 """
 import hashlib
 import json
@@ -30,6 +31,10 @@ HF = [
     ("video", "Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/vae/wan_2.1_vae.safetensors", "vae", None, "Comfy-Org_Wan_2.1_ComfyUI_repackaged.json"),
     ("video", "Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/clip_vision/clip_vision_h.safetensors", "clip_vision", None, "Comfy-Org_Wan_2.1_ComfyUI_repackaged.json"),
     ("fundo", "ZhengPeng7/BiRefNet", "model.safetensors", "background_removal", "birefnet.safetensors", "ZhengPeng7_BiRefNet.json"),
+    ("3d", "Comfy-Org/TRELLIS.2", "diffusion_models/trellis_2_int8_convrot.safetensors", "diffusion_models", "trellis_2_int8_convrot.safetensors", "Comfy-Org_TRELLIS.2.json"),
+    ("3d", "Comfy-Org/TRELLIS.2", "vae/trellis_2_shape_vae_bf16.safetensors", "vae", "trellis_2_shape_vae_bf16.safetensors", "Comfy-Org_TRELLIS.2.json"),
+    ("3d", "Comfy-Org/TRELLIS.2", "vae/trellis_2_texture_vae_bf16.safetensors", "vae", "trellis_2_texture_vae_bf16.safetensors", "Comfy-Org_TRELLIS.2.json"),
+    ("3d", "Comfy-Org/TRELLIS.2", "clip_vision/dino_v3_vit_l.safetensors", "clip_vision", "dino_v3_vit_l.safetensors", "Comfy-Org_TRELLIS.2.json"),
     ("traducao", "Qwen/Qwen2.5-1.5B-Instruct", "config.json", "@modelos_extra/qwen2.5-1.5b-instruct", None, "qwen15.json"),
     ("traducao", "Qwen/Qwen2.5-1.5B-Instruct", "generation_config.json", "@modelos_extra/qwen2.5-1.5b-instruct", None, "qwen15.json"),
     ("traducao", "Qwen/Qwen2.5-1.5B-Instruct", "merges.txt", "@modelos_extra/qwen2.5-1.5b-instruct", None, "qwen15.json"),
@@ -103,7 +108,7 @@ def baixar(url, dest_dir, local, size, digest):
 
 
 def main():
-    groups = set(sys.argv[1:]) or {"imagem", "flux", "fundo", "traducao", "ampliar", "video", "ltx"}
+    groups = set(sys.argv[1:]) or {"imagem", "flux", "fundo", "3d", "traducao", "ampliar", "video", "ltx"}
     ok = True
     for group, repo, filename, dest, local, meta in HF:
         if group not in groups:

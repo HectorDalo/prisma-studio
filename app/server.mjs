@@ -8,6 +8,12 @@ import { Galeria } from './lib/gallery.mjs';
 import * as wf from './lib/workflows.mjs';
 import { Tradutor, pareceportugues } from './lib/tradutor.mjs';
 import { Online, MODELOS_ONLINE } from './lib/online.mjs';
+import { Descritor } from './lib/descritor.mjs';
+import { Limpeza } from './lib/limpeza.mjs';
+import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, marcaLimpa, promptLetreiro, configFachada } from './lib/estilo3d.mjs';
+import { Exportador } from './lib/exportar.mjs';
+import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { deveEncerrar } from './lib/vigia.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.PRISMA_RAIZ || dirname(AQUI);            // D:\Claude\prisma
@@ -18,8 +24,11 @@ const engine = new Engine({ raiz: RAIZ });
 const galeria = new Galeria(join(RAIZ, 'galeria'));
 const tradutor = new Tradutor({ raiz: RAIZ });
 const online = new Online({ raiz: RAIZ });
+const descritor = new Descritor();
+const limpeza = new Limpeza({ raiz: RAIZ });
+const exportador = new Exportador();
 
-const TIPOS = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.ico': 'image/x-icon', '.json': 'application/json' };
+const TIPOS = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.ico': 'image/x-icon', '.json': 'application/json', '.glb': 'model/gltf-binary' };
 
 // ---------- fila de trabalhos (um por vez: a placa só dá conta de um) ----------
 const trabalhos = new Map();
@@ -116,6 +125,8 @@ rota('GET', '/api/status', async (req, res) => {
   modelos.fundo = engine.temModelo('background_removal/birefnet.safetensors');
   modelos.ampliar = engine.temModelo('upscale_models/RealESRGAN_x4plus.pth');
   modelos.traducao = tradutor.disponivel();
+  modelos['3d'] = wf.MODELO_3D.arquivos.every((a) => engine.temModelo(a)) && wf.MODELOS_IMAGEM.flux.arquivos.every((a) => engine.temModelo(a))
+    && descritor.disponivel() && limpeza.disponivel();
   for (const m of Object.values(MODELOS_ONLINE)) modelos[m.id] = online.temChave();
   json(res, { motor, modelos, online: { chave: online.temChave() }, fila: fila.length + (rodando ? 1 : 0) });
 });
@@ -217,6 +228,173 @@ rota('POST', '/api/video', async (req, res) => {
     for (const s of saidas) await guardar(job, s, 'video', params, 'mp4');
   });
   json(res, { trabalhos: [t.id] });
+});
+
+// ---------- Criar 3D: qwen (descrição e medidas) -> FLUX (imagem no estilo travado) -> BiRefNet + TRELLIS.2 -> limpeza no Godot -> .glb
+rota('GET', '/api/3d/estilo', async (req, res) => json(res, { estilo: ESTILO_EQ, tamanhos: TAMANHOS }));
+
+function criar3d({ pedido, cor, semente: base, lote = '' }) {
+  return criarTrabalho('3d', pedido.slice(0, 80), async (job) => {
+    job.etapa = 'Escrevendo a descrição e as medidas (qwen)…';
+    const desc = await descritor.descrever(pedidoDoLote(pedido, lote));
+    if (job.cancelado) return;
+    const prompt = promptImagem(desc);
+    job.etapa = 'Desenhando a imagem (FLUX)…';
+    const prefixo = 'prisma_' + job.id;
+    const imgs = await engine.executar(wf.flux({ prompt, largura: 1024, altura: 1024, passos: 4, semente: base, prefixo }),
+      ({ passo, total }) => { job.passo = passo; job.total = total; job.progresso = total ? (passo / total) * 0.1 : 0; });
+    const imagem = await guardar(job, imgs[0], 'imagem', { modelo: 'flux', prompt, promptOriginal: pedido, semente: base, para3d: true }, 'png');
+    if (job.cancelado) return;
+    await engine.liberar();
+    const nomeMotor = await engine.enviarImagem(readFileSync(galeria.caminho(imagem.id)), prefixo + '.png');
+    let etapa3d = 0;
+    const ETAPAS = ['estrutura', 'forma', 'detalhes', 'cor'];
+    job.etapa = 'Criando o modelo 3D (TRELLIS.2): estrutura…';
+    const saidas = await engine.executar(wf.trellis3d({ imagem: nomeMotor, faces: desc.faces, textura: desc.textura, cor, semente: base, prefixo }), ({ passo, total }) => {
+      if (passo === 1 && job.passo > 1) etapa3d = Math.min(3, etapa3d + 1);   // cada amostragem recomeça a contagem
+      job.passo = passo; job.total = total;
+      job.etapa = `Criando o modelo 3D (TRELLIS.2): ${ETAPAS[etapa3d]}…`;
+      job.progresso = 0.1 + 0.85 * ((etapa3d + (total ? passo / total : 0)) / 4);
+    });
+    await engine.liberar();
+    if (job.cancelado) return;
+    const glb = saidas.find((s) => /\.glb$/i.test(s.filename));
+    if (!glb) throw new Error('O TRELLIS.2 não devolveu o modelo.');
+    job.etapa = 'Limpando: escala real e base no chão (Godot)…';
+    const pasta = join(RAIZ, 'tmp', '3d');
+    mkdirSync(pasta, { recursive: true });
+    const cru = join(pasta, job.id + '_cru.glb'); const pronto = join(pasta, job.id + '.glb');
+    writeFileSync(cru, await engine.baixar(glb));
+    const m = desc.medidas_m;
+    const relatorio = await limpeza.limpar(cru, pronto, m, correcaoPara(desc.categoria));
+    const item = galeria.salvar({ buffer: readFileSync(pronto), ext: 'glb', tipo: '3d', params: {
+      modelo: 'trellis2', pedido, prompt, semente: base, cor, previa: imagem.id, ...(lote ? { lote } : {}),
+      vocab: { en: desc.nome_en, pt: desc.nome_pt, categoria: desc.categoria, medidas_m: m },
+      tamanho: desc.tamanho, faces: relatorio.faces, tamanho_m: relatorio.tamanho_m, bytes: relatorio.bytes, estilo: 'englishquest',
+    } });
+    job.itens.push(item);
+    for (const f of [cru, pronto]) { try { unlinkSync(f); } catch { /* já foi */ } }
+    job.etapa = null;
+  });
+}
+
+rota('POST', '/api/3d', async (req, res) => {
+  const b = await lerJson(req);
+  const pedido = texto(b.pedido, 300);
+  if (!pedido) return json(res, { erro: 'Descreva o objeto.' }, 400);
+  const cor = b.cor === 'vertices' ? 'vertices' : 'textura';
+  const t = criar3d({ pedido, cor, semente: semente(b.semente) });
+  json(res, { trabalhos: [t.id] });
+});
+
+// Lote: "loja de pets: cachorro, gato, aquário" vira um trabalho por objeto, todos na mesma fila.
+rota('POST', '/api/3d/lote', async (req, res) => {
+  const b = await lerJson(req);
+  const { contexto, itens, cortados } = lerLote(texto(b.lista, 3000));
+  if (!itens.length) return json(res, { erro: 'Escreva a lista de objetos, separados por vírgula.' }, 400);
+  const cor = b.cor === 'vertices' ? 'vertices' : 'textura';
+  const base = semente(b.semente);
+  const trabalhos = itens.map((item, i) => criar3d({ pedido: item, cor, semente: base + i * 7, lote: contexto }).id);
+  json(res, { trabalhos, contexto, itens, cortados });
+});
+
+// Textura sem emenda (tijolo, reboco, madeira, piso) para montar fachadas por peças: FLUX -> desloca meia volta (Godot) ->
+// o FLUX repinta só a emenda (cruz no meio) -> mede a emenda que sobrou.
+const SUFIXO_TEXTURA = 'seamless tileable texture, stylized hand painted game texture, flat front orthographic view, even flat lighting, no shadows, no perspective, no objects, pattern fills the whole frame edge to edge';
+function criarTextura({ prompt, semente: base }) {
+  return criarTrabalho('textura', prompt.slice(0, 80), async (job) => {
+    job.itens.push(await texturaSemEmenda(job, prompt, base, 'prisma_' + job.id));
+    job.etapa = null;
+  });
+}
+
+async function texturaSemEmenda(job, prompt, base, prefixo) {
+  const completo = `${prompt.replace(/[.,\s]+$/, '')}, ${SUFIXO_TEXTURA}`;
+  job.etapa = `Desenhando a textura (FLUX): ${prompt.slice(0, 40)}…`;
+  const [bruta] = await engine.executar(wf.flux({ prompt: completo, largura: 1024, altura: 1024, passos: 4, semente: base, prefixo }));
+  const pasta = join(RAIZ, 'tmp', 'texturas'); mkdirSync(pasta, { recursive: true });
+  const arq = (n) => join(pasta, `${prefixo}_${n}.png`);
+  writeFileSync(arq('bruta'), await engine.baixar(bruta));
+  const antes = await limpeza.medirEmenda(arq('bruta'));
+  let costurada = false;
+  if (precisaCostura(antes.emenda_relativa)) {          // a emenda aparece: o FLUX repinta só a cruz do meio
+    job.etapa = 'Tirando a emenda…';
+    await limpeza.prepararLadrilho(arq('bruta'), arq('deslocada'), arq('mascara'), 1024);
+    const img = await engine.enviarImagem(readFileSync(arq('deslocada')), prefixo + '_d.png');
+    const masc = await engine.enviarImagem(readFileSync(arq('mascara')), prefixo + '_m.png');
+    const [pronta] = await engine.executar(wf.fluxCostura({ imagem: img, mascara: masc, prompt: completo, semente: base + 1, prefixo }));
+    writeFileSync(arq('pronta'), await engine.baixar(pronta));
+    costurada = true;
+  } else {
+    writeFileSync(arq('pronta'), readFileSync(arq('bruta')));   // já repete sem salto (reboco liso): repintar só estragaria
+  }
+  const depois = await limpeza.medirEmenda(arq('pronta'));
+  const item = galeria.salvar({ buffer: readFileSync(arq('pronta')), ext: 'png', tipo: 'textura', params: {
+    modelo: 'flux', prompt: completo, promptOriginal: prompt, semente: base, semEmenda: true, costurada,
+    emenda_relativa_antes: antes.emenda_relativa, emenda_relativa: depois.emenda_relativa } });
+  for (const n of ['bruta', 'deslocada', 'mascara', 'pronta']) { try { unlinkSync(arq(n)); } catch { /* já foi */ } }
+  return item;
+}
+
+// Criar fachada (método B): o qwen planeja materiais e cores pelo tipo de loja e pela marca, o FLUX faz 4 texturas sem
+// emenda e o letreiro com a marca, e o Godot monta a loja por peças (porta de verdade, colisão) num .glb leve.
+function criarFachada({ tipo, marca, detalhes, cor, semente: base }) {
+  return criarTrabalho('3d', `Fachada: ${marca} (${tipo})`.slice(0, 80), async (job) => {
+    job.etapa = 'Planejando materiais e cores (qwen)…';
+    const plano = await descritor.planejarFachada(tipo, marca);
+    const prefixo = 'prisma_' + job.id;
+    const texturas = {};
+    const slots = [['tijolo', plano.parede], ['reboco', plano.lateral], ['madeira', plano.madeira], ['piso', plano.piso]];
+    for (const [i, [slot, prompt]] of slots.entries()) {
+      if (job.cancelado) return;
+      const item = await texturaSemEmenda(job, prompt, base + i * 11, `${prefixo}_${slot}`);
+      job.itens.push(item);
+      texturas[slot] = galeria.caminho(item.id);
+      job.progresso = (i + 1) / 6;
+    }
+    job.etapa = 'Escrevendo o letreiro (FLUX)…';
+    const promptSign = promptLetreiro(plano);
+    const [sinal] = await engine.executar(wf.flux({ prompt: promptSign, largura: 1344, altura: 768, passos: 4, semente: base + 99, prefixo }));
+    const letreiro = await guardar(job, sinal, 'imagem', { modelo: 'flux', prompt: promptSign, semente: base + 99, para3d: true }, 'png');
+    await engine.liberar();
+    job.etapa = 'Montando a loja por peças (Godot)…';
+    const pasta = join(RAIZ, 'tmp', '3d'); mkdirSync(pasta, { recursive: true });
+    const cfg = join(pasta, job.id + '_fachada.json'); const saida = join(pasta, job.id + '_fachada.glb');
+    writeFileSync(cfg, JSON.stringify(configFachada(plano, texturas, galeria.caminho(letreiro.id))));
+    const r = await limpeza.rodar('fachada_exportar.gd', [cfg, saida]);
+    const item = galeria.salvar({ buffer: readFileSync(saida), ext: 'glb', tipo: '3d', params: {
+      modelo: 'fachada', pedido: `${tipo}: ${marca}`, fachada: plano, previa: letreiro.id, semente: base,
+      vocab: { en: plano.tipo_en, pt: plano.tipo_pt, categoria: 'building', medidas_m: { largura: r.tamanho_m[0], profundidade: r.tamanho_m[2], altura: r.tamanho_m[1] } },
+      tamanho: 'fachada', faces: r.faces, tamanho_m: r.tamanho_m, bytes: r.bytes, colisoes: r.colisoes, cor: 'textura', estilo: 'englishquest',
+    } });
+    job.itens.push(item);
+    for (const f of [cfg, saida]) { try { unlinkSync(f); } catch { /* já foi */ } }
+    job.etapa = null;
+    // detalhes da calçada (TRELLIS.2): entram na fila depois, um modelo por objeto, com a loja como cenário
+    if (detalhes) for (const [i, d] of plano.detalhes.entries()) criar3d({ pedido: d, cor, semente: base + 200 + i, lote: `${plano.tipo_pt} ${plano.marca}` });
+  });
+}
+
+rota('POST', '/api/fachada', async (req, res) => {
+  const b = await lerJson(req);
+  const tipo = texto(b.tipo, 60);
+  const marca = marcaLimpa(b.marca);
+  if (!tipo || !marca) return json(res, { erro: 'Escreva o tipo de loja e o nome da marca.' }, 400);
+  const t = criarFachada({ tipo, marca, detalhes: b.detalhes !== false, cor: b.cor === 'vertices' ? 'vertices' : 'textura', semente: semente(b.semente) });
+  json(res, { trabalhos: [t.id] });
+});
+
+rota('POST', '/api/textura', async (req, res) => {
+  const b = await lerJson(req);
+  const prompt = texto(b.prompt, 600);
+  if (!prompt) return json(res, { erro: 'Descreva a textura.' }, 400);
+  json(res, { trabalhos: [criarTextura({ prompt, semente: semente(b.semente) }).id] });
+});
+
+rota('POST', '/api/galeria/:id/exportar', async (req, res, p) => {
+  const item = galeria.obter(p.id);
+  if (!item) return json(res, { erro: 'Item não encontrado.' }, 404);
+  try { json(res, exportador.exportar(item, galeria.caminho(p.id))); } catch (e) { json(res, { erro: e.message }, 400); }
 });
 
 rota('POST', '/api/entrada', async (req, res) => {
@@ -321,8 +499,8 @@ function encerrar() {
   setTimeout(() => process.exit(0), 300);
 }
 
-// Se a janela do app for fechada, ninguém mais manda sinal de vida: desliga o motor e libera a placa de vídeo.
-setInterval(() => { if (recebeuPing && Date.now() - ultimoPing > 25000) encerrar(); }, 5000);
+// Se a janela do app for fechada, ninguém mais manda sinal de vida: desliga o motor e libera a placa de vídeo (regras em lib/vigia.mjs).
+setInterval(() => { if (deveEncerrar({ recebeuPing, ultimoPing, ocupado: rodando || fila.length > 0 })) encerrar(); }, 5000);
 process.on('SIGINT', encerrar);
 process.on('SIGTERM', encerrar);
 process.on('exit', () => { tradutor.desligar(); engine.parar(); });

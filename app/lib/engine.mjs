@@ -140,7 +140,7 @@ export class Engine {
     const hist = (await (await fetch(`${HOST}/history/${pid}`)).json())[pid];
     const arquivos = [];
     for (const no of Object.values(hist?.outputs || {})) {
-      for (const chave of ['images', 'videos', 'gifs']) arquivos.push(...(no[chave] || []));
+      for (const chave of ['images', 'videos', 'gifs', '3d']) arquivos.push(...(no[chave] || []));
     }
     return arquivos;
   }
@@ -150,6 +150,11 @@ export class Engine {
     const r = await fetch(`${HOST}/view?${qs}`);
     if (!r.ok) throw new Error('Não consegui buscar o resultado no motor.');
     return Buffer.from(await r.arrayBuffer());
+  }
+
+  // Tira os modelos da placa e da RAM (entre o FLUX e o TRELLIS.2 a memória de 8 GB / 16 GB fica apertada).
+  async liberar() {
+    try { await fetch(HOST + '/free', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unload_models: true, free_memory: true }) }); } catch { /* motor fora */ }
   }
 
   async interromper() {
