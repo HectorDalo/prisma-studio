@@ -1,8 +1,8 @@
 // Teste da IA online com um servidor falso da fal.ai (não gasta nada nem usa a internet): node tools/teste_online.mjs
 import http from 'node:http';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 let porta, consultas = 0, ultimoCorpo = null, chaveVista = null;
@@ -27,7 +27,11 @@ await new Promise((ok) => falso.listen(0, '127.0.0.1', ok));
 porta = falso.address().port;
 process.env.PRISMA_FAL_BASE = `http://127.0.0.1:${porta}`;
 const { Online, MODELOS_ONLINE } = await import('../app/lib/online.mjs');
-const online = new Online({ raiz: mkdtempSync(join(tmpdir(), 'prisma-')) });
+// pasta temporária no D: (tmp do Prisma), apagada no fim: nada vai para o C:
+const TMP_RAIZ = join(dirname(dirname(fileURLToPath(import.meta.url))), 'tmp');
+mkdirSync(TMP_RAIZ, { recursive: true });
+const TMP = mkdtempSync(join(TMP_RAIZ, 'online-'));
+const online = new Online({ raiz: TMP });
 let falhas = 0;
 const ok = (c, m) => { if (!c) { falhas++; console.log('FALHOU:', m); } };
 ok(!online.temChave(), 'sem chave no começo');
@@ -44,5 +48,6 @@ ok(etapas.includes('Na fila da fal.ai…'), 'mostra a fila');
 online.removerChave();
 ok(!online.temChave(), 'chave removida');
 falso.close();
+rmSync(TMP, { recursive: true, force: true });
 console.log(falhas ? falhas + ' falha(s)' : 'RESULTADO: TUDO OK');
 process.exit(falhas ? 1 : 0);

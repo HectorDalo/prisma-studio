@@ -13,6 +13,19 @@ const RAIZ_PRISMA = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 const carimbo = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
+// No jogo, as texturas (WebP) ficam dentro do .glb importado (Basis Universal), sem PNG soltos ao lado do modelo:
+// gltf/embedded_image_handling=2 no .import. Arquivo novo: o Godot completa o resto do .import na primeira importação.
+export const IMAGENS_EMBUTIDAS = 'gltf/embedded_image_handling=2';
+export function importarEmbutido(glb) {
+  const imp = glb + '.import';
+  if (!existsSync(imp)) { writeFileSync(imp, `[remap]\n\nimporter="scene"\n\n[params]\n\n${IMAGENS_EMBUTIDAS}\n`); return; }
+  const s = readFileSync(imp, 'utf8');
+  const novo = /gltf\/embedded_image_handling=\d/.test(s)
+    ? s.replace(/gltf\/embedded_image_handling=\d/, IMAGENS_EMBUTIDAS)
+    : s.replace(/\[params\]\s*/, `[params]\n\n${IMAGENS_EMBUTIDAS}\n`);
+  if (novo !== s) writeFileSync(imp, novo);
+}
+
 export class Exportador {
   constructor({ destino = process.env.PRISMA_EQ_ASSETS || DESTINO_PADRAO, backups = process.env.PRISMA_BACKUPS || join(RAIZ_PRISMA, 'backups', 'exportar') } = {}) {
     this.destino = destino;
@@ -47,6 +60,7 @@ export class Exportador {
       writeFileSync(join(backup, 'LEIA.txt'), `Cópia feita pelo Prisma antes de exportar de novo "${nome}" para ${this.destino}.\nPara voltar, copie estes arquivos de volta para lá.\n`);
     }
     copyFileSync(caminhoGlb, glb);
+    importarEmbutido(glb);
     writeFileSync(json, JSON.stringify(vocabExportado(item, nome + '.glb'), null, 1) + '\n');
     return { nome, glb, json, backup };
   }

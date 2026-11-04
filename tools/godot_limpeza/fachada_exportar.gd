@@ -52,6 +52,9 @@ func _rodar() -> void:
 	corpo.free()
 	var luz := loja.get_node_or_null("OmniLight3D")
 	var doc := GLTFDocument.new()
+	# texturas dentro do .glb em WebP com perda (bem menores que PNG; no jogo o import as embute, sem PNG soltos)
+	doc.image_format = "Lossy WebP"
+	doc.lossy_quality = 0.9
 	var st := GLTFState.new()
 	if doc.append_from_scene(loja, st) != OK or doc.write_to_filesystem(st, a[1]) != OK:
 		_fim({"erro": "não consegui salvar " + a[1]})
@@ -69,8 +72,14 @@ func _rodar() -> void:
 	# confere no arquivo salvo: o texto foi junto e as caixas de colisão não têm nada visível
 	var doc2 := GLTFDocument.new()
 	var st2 := GLTFState.new()
-	var no_arquivo := {"texto": false, "colisao_invisivel": true}
+	var no_arquivo := {"texto": false, "colisao_invisivel": true, "imagens_webp": 0, "imagens_outras": 0}
 	if doc2.append_from_file(a[1], st2) == OK:
+		var json_gltf: Dictionary = st2.json
+		for im in json_gltf.get("images", []):
+			if str(im.get("mimeType", "")) == "image/webp":
+				no_arquivo["imagens_webp"] += 1
+			else:
+				no_arquivo["imagens_outras"] += 1
 		for m in st2.get_materials():
 			if m.resource_name == "texto":
 				no_arquivo["texto"] = true

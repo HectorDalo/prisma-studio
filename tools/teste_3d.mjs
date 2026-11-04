@@ -84,6 +84,15 @@ const gu = gal.atualizar(gi.id, Buffer.from('bb'), { letreiro_escolhido: 2 });
 ok(gu.params.letreiro_escolhido === 2 && gu.params.x === 1 && gu.atualizadoEm && readFileSync(gal.caminho(gi.id)).length === 2, 'trocar o letreiro troca o arquivo e guarda a escolha');
 let recusou = false; try { ex.exportar({ ...itemFake('ccc', 'x'), tipo: 'imagem' }, glbFalso); } catch { recusou = true; }
 ok(recusou, 'imagem não é exportada como modelo');
+{
+  const { importarEmbutido } = await import('../app/lib/exportar.mjs');
+  const imp = join(destino, 'dog_collar.glb.import');
+  ok(readFileSync(imp, 'utf8').includes('gltf/embedded_image_handling=2'), 'exportar cria o .import com as texturas embutidas (sem PNG soltos no jogo)');
+  writeFileSync(imp, '[remap]\n\nimporter="scene"\n\n[params]\n\nnodes/root_type=""\ngltf/embedded_image_handling=1\n');
+  importarEmbutido(join(destino, 'dog_collar.glb'));
+  const s2 = readFileSync(imp, 'utf8');
+  ok(s2.includes('gltf/embedded_image_handling=2') && !s2.includes('handling=1') && s2.includes('nodes/root_type'), 'import que extraía PNG passa a embutir, sem perder o resto');
+}
 ok(!new Exportador({ destino: join(TMP, 'nada', 'assets', 'prisma') }).disponivel() || !!process.env.PRISMA_EQ_ASSETS, 'sem o projeto do jogo, não cria pasta solta');
 
 console.log('tabela de medidas padrão e revisão');
@@ -261,6 +270,7 @@ if (!limpeza.disponivel()) { ok(false, 'Godot encontrado em ' + limpeza.godot); 
   writeFileSync(cfgF, JSON.stringify({ largura: 7, altura: 4.5, toldo: ['#1e88e5', '#ffffff'] }));
   const ex2 = await limpeza.rodar('fachada_exportar.gd', [cfgF, glbF]);
   ok(existsSync(glbF) && ex2.colisoes >= 10 && Math.abs(ex2.tamanho_m[1] - 4.68) < 0.3 && ex2.faces < 2000, `exporta a loja: ${ex2.faces} faces, ${ex2.colisoes} caixas de colisão "-colonly"`);
+  ok(ex2.no_arquivo.imagens_webp >= 1 && ex2.no_arquivo.imagens_outras === 0, `texturas dentro do .glb em WebP (${ex2.no_arquivo.imagens_webp} imagens, nenhuma PNG)`);
   ok(ex2.no_arquivo.colisao_invisivel, 'as caixas de colisão vão invisíveis no .glb (eram elas as manchas pontilhadas e as laterais brancas)');
   writeFileSync(cfgF, JSON.stringify({ largura: 8, altura: 4.4, marca: 'Pão da Vila', fonte: 1, andares: 2, degrau: true, calha: true, rodape: true, laterais: 'tijolo' }));
   const ex3 = await limpeza.rodar('fachada_exportar.gd', [cfgF, glbF]);
