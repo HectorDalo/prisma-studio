@@ -579,6 +579,7 @@ function render3d() {
     const [rodape, lRodape] = marca('rodapé de pedra', v.rodape); const [calha, lCalha] = marca('calha', v.calha); const [degrau, lDegrau] = marca('degrau na porta', v.degrau);
     const cores = p.toldo.map((c) => h('input', { type: 'color', value: c, class: 'cor-toldo' }));
     const det = t((p.detalhes || []).join(', '), 200);
+    const palavras = t((p.outras_palavras || []).map((w) => `${w.en} = ${w.pt}`).join(', '), 200);
     const ROT = { parede: 'Parede da frente', lateral: 'Paredes do lado', madeira: 'Madeira (painel e moldura)', piso: 'Piso de dentro', telhado: 'Telhado' };
     const no = h('div', { class: 'item-revisao' },
       h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Tipo de loja em inglês'), en), h('div', { class: 'campo' }, h('label', {}, 'Em português'), pt)),
@@ -587,10 +588,13 @@ function render3d() {
       h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Andares'), andares), h('div', { class: 'campo' }, h('label', {}, 'Laterais e fundo'), laterais)),
       h('div', { class: 'campo', style: 'flex-direction:row;gap:14px;flex-wrap:wrap' }, lRodape, lCalha, lDegrau),
       h('details', {}, h('summary', {}, 'Materiais (texto em inglês para o FLUX)'), ...mats.map(([k, i]) => h('div', { class: 'campo' }, h('label', {}, ROT[k]), i))),
+      h('div', { class: 'campo' }, h('label', {}, 'Outras palavras que a loja ensina (inglês = português)'), palavras,
+        h('div', { class: 'dica' }, 'Ex.: drugstore = drogaria. Vão para o .json de vocabulário junto com o tipo de loja.')),
       h('div', { class: 'campo' }, h('label', {}, 'Detalhes da calçada (separados por vírgula)'), det));
     const ler = () => ({ ...p, tipo_en: en.value.trim().toLowerCase(), tipo_pt: pt.value.trim().toLowerCase(), largura_m: num(larg.value), altura_m: num(alt.value),
       ...Object.fromEntries(mats.map(([k, i]) => [k, i.value.trim()])), toldo: cores.map((c) => c.value), detalhes: det.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3),
-      variacao: { andares: Number(andares.value), laterais: laterais.value, rodape: rodape.checked, calha: calha.checked, degrau: degrau.checked } });
+      variacao: { andares: Number(andares.value), laterais: laterais.value, rodape: rodape.checked, calha: calha.checked, degrau: degrau.checked },
+      outras_palavras: palavras.value.split(/[,;]+/).map((par) => par.split('=').map((x) => x.trim().toLowerCase())).filter(([en, pt]) => en && pt).map(([en, pt]) => ({ en, pt })) });
     return { no, ler };
   }
 }

@@ -473,6 +473,23 @@ rota('POST', '/api/fachada', async (req, res) => {
   json(res, { trabalhos: [t.id] });
 });
 
+// Mudar a marca (e as palavras que a loja ensina) de uma fachada pronta: só remonta no Godot com o nome novo no letreiro.
+rota('POST', '/api/galeria/:id/fachada', async (req, res, p) => {
+  const item = galeria.obter(p.id);
+  const b = await lerJson(req);
+  const pr = item?.params || {};
+  if (!item || pr.modelo !== 'fachada') return json(res, { erro: 'Esta não é uma fachada.' }, 400);
+  const marca = b.marca === undefined ? pr.fachada.marca : marcaLimpa(b.marca);
+  if (!marca) return json(res, { erro: 'Escreva o nome da marca.' }, 400);
+  const fachada = { ...pr.fachada, marca, ...(Array.isArray(b.outras_palavras) ? { outras_palavras: normalizarFachada({ outras_palavras: b.outras_palavras }, '', '').outras_palavras } : {}) };
+  const i = pr.letreiro_escolhido || 0;
+  const texturas = Object.fromEntries(Object.entries(pr.texturas || {}).map(([slot, id]) => [slot, galeria.caminho(id)]).filter(([, c]) => c));
+  try {
+    const r = await montarFachada(item.id + '_m', fachada, texturas, galeria.caminho(pr.letreiros[i]), i % 3);
+    json(res, galeria.atualizar(item.id, r.buffer, { fachada, pedido: `${fachada.tipo_pt}: ${marca}`, faces: r.faces, bytes: r.bytes, tamanho_m: r.tamanho_m }));
+  } catch (e) { json(res, { erro: e.message }, 500); }
+});
+
 // Trocar o letreiro de uma fachada pronta por outra das 3 variações: só remonta no Godot (segundos), sem FLUX nem TRELLIS.2.
 rota('POST', '/api/galeria/:id/letreiro', async (req, res, p) => {
   const item = galeria.obter(p.id);

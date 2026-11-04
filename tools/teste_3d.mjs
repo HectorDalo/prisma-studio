@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptPlaca, configFachada, SISTEMA_DESCRITOR, escolherVariacao, normalizarVariacao } from '../app/lib/estilo3d.mjs';
+import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptPlaca, configFachada, SISTEMA_DESCRITOR, escolherVariacao, normalizarVariacao, SISTEMA_FACHADA } from '../app/lib/estilo3d.mjs';
 import { trellis3d } from '../app/lib/workflows.mjs';
 import { Limpeza } from '../app/lib/limpeza.mjs';
 
@@ -73,6 +73,9 @@ const fachadaFake = { id: 'fff999', tipo: '3d', criadoEm: 'x', params: { fachada
 const ef = ex.exportar(fachadaFake, glbFalso);
 const jf = JSON.parse(readFileSync(ef.json, 'utf8'));
 ok(ef.nome === 'greenleaf_pharmacy' && jf.en === 'pharmacy' && jf.marca === 'Greenleaf Pharmacy' && jf.variacao.andares === 2, 'fachada: arquivo com o nome da marca, .json ensina a palavra (pharmacy) e guarda a marca');
+const fachada2 = { ...fachadaFake, id: 'ggg111', params: { ...fachadaFake.params, fachada: { marca: 'Greenleaf Drugstore', outras_palavras: [{ en: 'drugstore', pt: 'drogaria' }] } } };
+const jf2 = JSON.parse(readFileSync(ex.exportar(fachada2, glbFalso).json, 'utf8'));
+ok(jf2.palavras.length === 2 && jf2.palavras[0].en === 'pharmacy' && jf2.palavras[1].en === 'drugstore' && jf2.palavras[1].pt === 'drogaria', '.json ensina as duas palavras: pharmacy (farmácia) e drugstore (drogaria)');
 ok(e1.backup === null && e3.backup && existsSync(join(e3.backup, 'dog_collar.glb')) && existsSync(join(e3.backup, 'dog_collar.json')), 'antes de trocar, copia os arquivos antigos para o backup (o 1º export não tem o que guardar)');
 const { Galeria } = await import('../app/lib/gallery.mjs');
 const gal = new Galeria(join(TMP, 'galeria'));
@@ -112,6 +115,9 @@ const pf = normalizarFachada('ok {"tipo_en":"Pet Shop","tipo_pt":"Loja de pets",
 ok(pf.tipo_en === 'pet shop' && pf.tipo_pt === 'loja de pets' && pf.largura_m === 10 && pf.altura_m === 4, 'plano: nomes em minúsculas e medidas dentro de 6-10 x 4-6 m');
 ok(pf.parede.includes('clapboard') && pf.lateral.length > 5 && pf.piso.length > 5 && pf.toldo[0] === '#1e88e5' && pf.detalhes.length === 3, 'materiais, cores do toldo e até 3 detalhes (o que faltar tem padrão)');
 ok(pf.marca === 'Patinhas Felizes' && marcaLimpa('a'.repeat(50)).length === 28, 'marca sem aspas nem quebras, até 28 letras');
+ok(/NEVER decorative patterns/.test(SISTEMA_FACHADA) && /outras_palavras/.test(SISTEMA_FACHADA), 'o qwen pede parede de material liso (sem arcos nem motivos) e outras palavras da loja');
+const op = normalizarFachada({ outras_palavras: [{ en: 'Drugstore', pt: 'Drogaria' }, { en: '', pt: 'x' }, 'lixo'] }, 'farmácia', 'X').outras_palavras;
+ok(op.length === 1 && op[0].en === 'drugstore' && op[0].pt === 'drogaria', 'outras palavras: conferidas e em minúsculas');
 ok(normalizarFachada('nada', 'padaria', 'Pão Bom').toldo.length === 2 && normalizarFachada({ toldo: ['vermelho', 'x'] }, 'x', 'y').toldo[0] === '#2f6e4f', 'resposta torta e cor inválida viram padrão');
 const pl = promptPlaca(pf);
 ok(!pl.includes('Patinhas') && /no text, no letters/.test(pl) && /no wall/.test(pl), 'placa: o FLUX faz só a placa, sem o nome (quem escreve é o Godot)');

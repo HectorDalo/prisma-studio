@@ -138,9 +138,17 @@ export function vocabExportado(item, arquivoGlb) {
     faces: p.faces, cor: p.cor === 'vertices' ? 'vertices' : 'textura', arquivo: arquivoGlb,
     prisma_id: item.id, criado_em: item.criadoEm, pedido: p.pedido, ...(p.lote ? { cenario: p.lote } : {}),
     ...(p.fachada ? { marca: p.fachada.marca, variacao: p.fachada.variacao, colisoes: p.colisoes } : {}),
+    // todas as palavras que o objeto ensina (a principal primeiro): "pharmacy" e "drugstore", por exemplo
+    palavras: [{ en: v.en, pt: v.pt }, ...((p.fachada?.outras_palavras) || [])].filter((w) => w.en),
     gerado_com: 'Prisma Studio, local: qwen2.5:7b (Apache-2.0), FLUX.1 schnell (Apache-2.0), BiRefNet (MIT), TRELLIS.2 (MIT), DINOv3 (DINOv3 License)',
     licenca: 'modelo gerado localmente; as licenças dos modelos de IA usados permitem uso comercial',
   };
+}
+
+// Palavras extras digitadas na revisão: "drugstore = drogaria, chemist = farmácia" -> [{en, pt}].
+export function lerPalavras(texto) {
+  return String(texto ?? '').split(/[,;\n]+/).map((par) => par.split('=').map((x) => x.trim().toLowerCase()))
+    .filter(([en, pt]) => en && pt).map(([en, pt]) => ({ en: en.slice(0, 40), pt: pt.slice(0, 40) })).slice(0, 3);
 }
 
 // Texturas: só repinta a emenda quando ela aparece. A razão é a emenda dividida pela diferença normal entre vizinhos
@@ -155,7 +163,7 @@ The user gives the kind of shop (usually in Portuguese) and the invented brand n
 "tipo_pt": the same in Brazilian Portuguese, lowercase (e.g. "café", "loja de pets", "padaria"),
 "largura_m": front width in meters, between 6 and 10,
 "altura_m": height in meters, between 4 and 6,
-"parede": material of the front wall, a short English texture description (e.g. "red brick wall with light gray mortar", "light blue painted wooden clapboard siding"),
+"parede": material of the front wall, a short English texture description of a PLAIN everyday material (e.g. "red brick wall with light gray mortar", "light blue painted wooden clapboard siding", "smooth sand colored stucco"); NEVER decorative patterns, tiles with motifs, arches, ornaments or murals,
 "lateral": material of the side walls, plain and smooth (e.g. "smooth cream painted stucco plaster wall"),
 "madeira": material of the trim and the panel under the windows (e.g. "dark green painted vertical wooden planks"),
 "piso": the floor inside (e.g. "warm honey colored wooden floor boards seen from above", "black and white checkered floor tiles"),
@@ -163,6 +171,7 @@ The user gives the kind of shop (usually in Portuguese) and the invented brand n
 "toldo": two hex colors for the striped awning, chosen for THIS shop and brand (a pet shop, a bakery and a bookstore must not share colors),
 "letreiro_fundo": the sign background color in English words,
 "letreiro_texto": the sign letters color in English words, with strong contrast to the background,
+"outras_palavras": up to 2 other common English words for this kind of shop, each with the Brazilian Portuguese word, e.g. [{"en": "drugstore", "pt": "drogaria"}] for a pharmacy, [{"en": "bistro", "pt": "bistrô"}] for a French restaurant (empty list if none),
 "detalhes": up to 3 small objects that THIS kind of shop would really put on the sidewalk in front of it, in Brazilian Portuguese (a pet shop: a water bowl for dogs, a bench; a bakery: a bread display, a small table; a flower shop: buckets of flowers).
 Every shop must look different: choose materials and colors that fit the kind of shop and the brand. Do not default to green.`;
 
@@ -186,6 +195,8 @@ export function normalizarFachada(bruto, tipo, marca) {
     parede: material(d.parede, 'red brick wall with light gray mortar'), lateral: material(d.lateral, 'smooth cream painted stucco plaster wall'),
     madeira: material(d.madeira, 'dark green painted vertical wooden planks'), piso: material(d.piso, 'warm honey colored wooden floor boards seen from above'),
     telhado: material(d.telhado, 'dark gray asphalt roof shingles seen from above'),
+    outras_palavras: (Array.isArray(d.outras_palavras) ? d.outras_palavras : []).map((w) => ({ en: textoLimpo(w?.en, 40).toLowerCase(), pt: textoLimpo(w?.pt, 40).toLowerCase() }))
+      .filter((w) => w.en && w.pt).slice(0, 3),
     ...(d.variacao && typeof d.variacao === 'object' ? { variacao: normalizarVariacao(d.variacao) } : {}),
     toldo, letreiro_fundo: textoLimpo(d.letreiro_fundo, 30) || 'dark green', letreiro_texto: textoLimpo(d.letreiro_texto, 30) || 'cream', detalhes,
   };
