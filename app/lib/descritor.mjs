@@ -34,16 +34,17 @@ export class Descritor {
     throw new Error('O Ollama não ligou.');
   }
 
-  async descrever(pedido) {
+  // `descarregar: false` deixa o qwen na placa para o próximo pedido (usado no lote, que descarrega no último).
+  async descrever(pedido, { descarregar = true } = {}) {
     await this.ligar();
     const r = await fetch(this.url + '/api/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.modelo, system: SISTEMA_DESCRITOR, prompt: pedido, format: 'json', stream: false, keep_alive: 0, options: { temperature: 0.2 } }),
+      body: JSON.stringify({ model: this.modelo, system: SISTEMA_DESCRITOR, prompt: pedido, format: 'json', stream: false, keep_alive: descarregar ? 0 : '2m', options: { temperature: 0.2 } }),
       signal: AbortSignal.timeout(300000),
     });
     if (!r.ok) throw new Error('O qwen não respondeu (' + r.status + ').');
     const corpo = await r.json();
-    await this.descarregar();
+    if (descarregar) await this.descarregar();
     return normalizarDescricao(corpo.response, pedido);
   }
 

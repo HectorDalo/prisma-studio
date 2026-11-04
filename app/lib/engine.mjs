@@ -34,7 +34,8 @@ export class Engine {
       try {
         const s = await (await fetch(HOST + '/system_stats', { signal: AbortSignal.timeout(2000) })).json();
         const d = s.devices?.[0];
-        if (d) vram = { nome: d.name.replace(/^cuda:\d+\s*/, '').replace(/\s*:\s*cudaMallocAsync/, ''), livreGB: +(d.vram_free / 1e9).toFixed(1), totalGB: +(d.vram_total / 1e9).toFixed(1) };
+        if (d) vram = { nome: d.name.replace(/^cuda:\d+\s*/, '').replace(/\s*:\s*cudaMallocAsync/, ''), livreGB: +(d.vram_free / 1e9).toFixed(1), totalGB: +(d.vram_total / 1e9).toFixed(1),
+          motorGiB: +((d.torch_vram_total || 0) / 2 ** 30).toFixed(1) };   // o que o próprio ComfyUI reservou
       } catch { /* sem VRAM agora */ }
     }
     return { noAr, iniciando: this.iniciando, vram };

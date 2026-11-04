@@ -67,6 +67,17 @@ export class Galeria {
     return item;
   }
 
+  // Troca o arquivo de um item (ex.: fachada remontada com outro letreiro) e junta campos novos aos params.
+  atualizar(id, buffer, params = {}) {
+    const item = this.obter(id);
+    if (!item) return null;
+    writeFileSync(join(this.pasta, item.arquivo), buffer);
+    item.params = { ...item.params, ...params };
+    item.atualizadoEm = new Date().toISOString();
+    writeFileSync(join(this.pasta, `${id}.json`), JSON.stringify(item, null, 1));
+    return item;
+  }
+
   excluir(id) {
     const item = this.obter(id);
     if (!item) return false;

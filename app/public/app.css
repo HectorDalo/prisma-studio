@@ -124,5 +124,25 @@ summary { cursor: pointer; color: var(--suave); font-size: 13px; margin-bottom: 
 .luz .palco:has(model-viewer) { align-self: stretch; min-height: 0; }
 .luz model-viewer { width: 100%; height: 100%; max-height: 92vh; min-height: 260px; background: radial-gradient(circle at 50% 40%, #1d2330, #0b0d12); border-radius: 10px; --poster-color: transparent; }
 
+/* revisão antes de gerar, aviso de memória e letreiros */
+.revisao { border-top: 1px solid var(--borda); margin-top: 14px; padding-top: 12px; }
+.revisao h3 { margin: 0 0 10px; font-size: 15px; }
+.item-revisao { background: var(--painel2); border: 1px solid var(--borda); border-radius: 12px; padding: 12px; margin-bottom: 10px; position: relative; }
+.item-revisao .campo { margin-bottom: 10px; }
+.item-revisao .sutil { position: absolute; right: 10px; top: 8px; padding: 3px 10px; }
+.lista-revisao { max-height: 60vh; overflow: auto; }
+.origem { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; margin-bottom: 8px; border: 1px solid var(--borda); }
+.origem.tabela { border-color: var(--ok); color: var(--ok); }
+.origem.qwen { border-color: #eab308; color: #eab308; }
+.origem.revisao { border-color: var(--acento2); color: var(--acento2); }
+.recursos { background: #eab30814; border: 1px solid #eab30866; border-radius: 12px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; }
+.linha-recurso { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.linha-recurso .secundario { flex: none; padding: 5px 10px; font-size: 12px; }
+.cor-toldo { width: 42px; height: 34px; padding: 2px; border-radius: 8px; border: 1px solid var(--borda); background: var(--painel2); }
+.letreiros { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.letreiro { display: flex; align-items: center; gap: 10px; background: var(--painel2); border: 1px solid var(--borda); border-radius: 10px; padding: 5px; text-align: left; color: var(--suave); font-size: 12px; }
+.letreiro img { width: 150px; height: 56px; object-fit: cover; border-radius: 6px; }
+.letreiro.on { border-color: var(--acento); color: var(--texto); }
+
 .marca-check {display: flex; align-items: center; gap: 7px; color: var(--suave); font-size: 12px; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .marca-check input { width: auto; accent-color: var(--acento); }

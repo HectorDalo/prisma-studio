@@ -10,10 +10,11 @@ import { Tradutor, pareceportugues } from './lib/tradutor.mjs';
 import { Online, MODELOS_ONLINE } from './lib/online.mjs';
 import { Descritor } from './lib/descritor.mjs';
 import { Limpeza } from './lib/limpeza.mjs';
-import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, marcaLimpa, promptLetreiro, configFachada } from './lib/estilo3d.mjs';
+import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, normalizarDescricao, LOTE_MAX, normalizarFachada, marcaLimpa, promptLetreiro, configFachada } from './lib/estilo3d.mjs';
 import { Exportador } from './lib/exportar.mjs';
 import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { deveEncerrar } from './lib/vigia.mjs';
+import { estadoRecursos, descarregarOllama, fecharElara } from './lib/recursos.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.PRISMA_RAIZ || dirname(AQUI);            // D:\Claude\prisma
@@ -233,10 +234,11 @@ rota('POST', '/api/video', async (req, res) => {
 // ---------- Criar 3D: qwen (descrição e medidas) -> FLUX (imagem no estilo travado) -> BiRefNet + TRELLIS.2 -> limpeza no Godot -> .glb
 rota('GET', '/api/3d/estilo', async (req, res) => json(res, { estilo: ESTILO_EQ, tamanhos: TAMANHOS }));
 
-function criar3d({ pedido, cor, semente: base, lote = '' }) {
-  return criarTrabalho('3d', pedido.slice(0, 80), async (job) => {
+// `revisado`: nome, medidas e descrição que você conferiu na tela de revisão (aí o qwen não é chamado de novo).
+function criar3d({ pedido, cor, semente: base, lote = '', revisado = null }) {
+  return criarTrabalho('3d', (revisado?.nome_en ? `${revisado.nome_en} (${pedido})` : pedido).slice(0, 80), async (job) => {
     job.etapa = 'Escrevendo a descrição e as medidas (qwen)…';
-    const desc = await descritor.descrever(pedidoDoLote(pedido, lote));
+    const desc = revisado ? normalizarDescricao(revisado, pedido, 'revisao') : await descritor.descrever(pedidoDoLote(pedido, lote));
     if (job.cancelado) return;
     const prompt = promptImagem(desc);
     job.etapa = 'Desenhando a imagem (FLUX)…';
@@ -266,10 +268,10 @@ function criar3d({ pedido, cor, semente: base, lote = '' }) {
     const cru = join(pasta, job.id + '_cru.glb'); const pronto = join(pasta, job.id + '.glb');
     writeFileSync(cru, await engine.baixar(glb));
     const m = desc.medidas_m;
-    const relatorio = await limpeza.limpar(cru, pronto, m, correcaoPara(desc.categoria));
+    const relatorio = await limpeza.limpar(cru, pronto, m, correcaoPara(desc.categoria, desc.origem_medidas));
     const item = galeria.salvar({ buffer: readFileSync(pronto), ext: 'glb', tipo: '3d', params: {
       modelo: 'trellis2', pedido, prompt, semente: base, cor, previa: imagem.id, ...(lote ? { lote } : {}),
-      vocab: { en: desc.nome_en, pt: desc.nome_pt, categoria: desc.categoria, medidas_m: m },
+      vocab: { en: desc.nome_en, pt: desc.nome_pt, categoria: desc.categoria, medidas_m: m }, origem_medidas: desc.origem_medidas,
       tamanho: desc.tamanho, faces: relatorio.faces, tamanho_m: relatorio.tamanho_m, bytes: relatorio.bytes, estilo: 'englishquest',
     } });
     job.itens.push(item);
@@ -278,22 +280,73 @@ function criar3d({ pedido, cor, semente: base, lote = '' }) {
   });
 }
 
+// Quem ocupa a placa e a RAM antes de gerar 3D (Elara, Ollama, outros) e o botão de liberar.
+rota('GET', '/api/recursos', async (req, res) => {
+  const m = await engine.estado();
+  const motorGB = m.vram?.motorGiB || 0;   // mesma unidade do nvidia-smi (GiB)
+  json(res, await estadoRecursos({ motorGB, ocupado: rodando || fila.length > 0 }));
+});
+
+rota('POST', '/api/recursos/liberar', async (req, res) => {
+  const b = await lerJson(req);
+  if (rodando || fila.length) return json(res, { erro: 'Espere a fila terminar: o próprio Prisma usa o Ollama entre as etapas.' }, 409);
+  await descarregarOllama();
+  const fechados = b.elara === true ? await fecharElara() : 0;
+  json(res, { ok: true, elaraFechada: fechados });
+});
+
+// Tela de revisão: o qwen sugere nome em inglês, em português e medidas (a tabela padrão vence quando o nome bate);
+// você corrige e só então o modelo vai para a fila. Leva uns 10 a 30 s (o qwen carrega na placa e sai logo depois).
+rota('POST', '/api/3d/descrever', async (req, res) => {
+  const b = await lerJson(req);
+  const pedido = texto(b.pedido, 300);
+  if (!pedido) return json(res, { erro: 'Descreva o objeto.' }, 400);
+  try { json(res, { pedido, desc: await descritor.descrever(pedido) }); } catch (e) { json(res, { erro: e.message }, 503); }
+});
+
+rota('POST', '/api/3d/lote/descrever', async (req, res) => {
+  const b = await lerJson(req);
+  const { contexto, itens, cortados } = lerLote(texto(b.lista, 3000));
+  if (!itens.length) return json(res, { erro: 'Escreva a lista de objetos, separados por vírgula.' }, 400);
+  try {
+    const lista = [];   // um de cada vez, com o qwen na placa até o último (descarrega no fim)
+    for (const [i, item] of itens.entries()) lista.push({ pedido: item, desc: await descritor.descrever(pedidoDoLote(item, contexto), { descarregar: i === itens.length - 1 }) });
+    json(res, { contexto, itens: lista, cortados });
+  } catch (e) { await descritor.descarregar(); json(res, { erro: e.message }, 503); }
+});
+
+const revisao = (r) => (r && typeof r === 'object' ? {
+  nome_en: texto(r.nome_en, 60), nome_pt: texto(r.nome_pt, 60), categoria: texto(r.categoria, 20), descricao_en: texto(r.descricao_en, 400),
+  medidas_m: { largura: r.medidas_m?.largura, profundidade: r.medidas_m?.profundidade, altura: r.medidas_m?.altura },
+} : null);
+
 rota('POST', '/api/3d', async (req, res) => {
   const b = await lerJson(req);
   const pedido = texto(b.pedido, 300);
   if (!pedido) return json(res, { erro: 'Descreva o objeto.' }, 400);
   const cor = b.cor === 'vertices' ? 'vertices' : 'textura';
-  const t = criar3d({ pedido, cor, semente: semente(b.semente) });
+  const r = revisao(b.revisado);
+  if (r && (!r.nome_en || !r.nome_pt)) return json(res, { erro: 'Preencha o nome em inglês e em português.' }, 400);
+  const t = criar3d({ pedido, cor, semente: semente(b.semente), revisado: r });
   json(res, { trabalhos: [t.id] });
 });
 
 // Lote: "loja de pets: cachorro, gato, aquário" vira um trabalho por objeto, todos na mesma fila.
 rota('POST', '/api/3d/lote', async (req, res) => {
   const b = await lerJson(req);
-  const { contexto, itens, cortados } = lerLote(texto(b.lista, 3000));
-  if (!itens.length) return json(res, { erro: 'Escreva a lista de objetos, separados por vírgula.' }, 400);
   const cor = b.cor === 'vertices' ? 'vertices' : 'textura';
   const base = semente(b.semente);
+  // já revisados na tela (lista de {pedido, revisado}) ou só o texto da lista (o qwen descreve cada um na fila)
+  if (Array.isArray(b.itens)) {
+    const itens = b.itens.slice(0, LOTE_MAX).map((x) => ({ pedido: texto(x.pedido, 120), revisado: revisao(x.revisado) })).filter((x) => x.pedido);
+    if (!itens.length) return json(res, { erro: 'A lista está vazia.' }, 400);
+    if (itens.some((x) => !x.revisado?.nome_en || !x.revisado?.nome_pt)) return json(res, { erro: 'Preencha o nome em inglês e em português de todos.' }, 400);
+    const contexto = texto(b.contexto, 80);
+    const trabalhos = itens.map((x, i) => criar3d({ pedido: x.pedido, cor, semente: base + i * 7, lote: contexto, revisado: x.revisado }).id);
+    return json(res, { trabalhos, contexto, itens: itens.map((x) => x.pedido), cortados: 0 });
+  }
+  const { contexto, itens, cortados } = lerLote(texto(b.lista, 3000));
+  if (!itens.length) return json(res, { erro: 'Escreva a lista de objetos, separados por vírgula.' }, 400);
   const trabalhos = itens.map((item, i) => criar3d({ pedido: item, cor, semente: base + i * 7, lote: contexto }).id);
   json(res, { trabalhos, contexto, itens, cortados });
 });
@@ -338,50 +391,94 @@ async function texturaSemEmenda(job, prompt, base, prefixo) {
 
 // Criar fachada (método B): o qwen planeja materiais e cores pelo tipo de loja e pela marca, o FLUX faz 4 texturas sem
 // emenda e o letreiro com a marca, e o Godot monta a loja por peças (porta de verdade, colisão) num .glb leve.
-function criarFachada({ tipo, marca, detalhes, cor, semente: base }) {
+// `revisado`: o plano que você conferiu na tela de revisão (nome da loja em inglês/português, tamanho, materiais).
+function criarFachada({ tipo, marca, detalhes, cor, semente: base, revisado = null }) {
   return criarTrabalho('3d', `Fachada: ${marca} (${tipo})`.slice(0, 80), async (job) => {
     job.etapa = 'Planejando materiais e cores (qwen)…';
-    const plano = await descritor.planejarFachada(tipo, marca);
+    const plano = revisado ? normalizarFachada(revisado, tipo, marca) : await descritor.planejarFachada(tipo, marca);
     const prefixo = 'prisma_' + job.id;
     const texturas = {};
+    const texturasIds = {};
     const slots = [['tijolo', plano.parede], ['reboco', plano.lateral], ['madeira', plano.madeira], ['piso', plano.piso]];
     for (const [i, [slot, prompt]] of slots.entries()) {
       if (job.cancelado) return;
       const item = await texturaSemEmenda(job, prompt, base + i * 11, `${prefixo}_${slot}`);
       job.itens.push(item);
       texturas[slot] = galeria.caminho(item.id);
+      texturasIds[slot] = item.id;
       job.progresso = (i + 1) / 6;
     }
-    job.etapa = 'Escrevendo o letreiro (FLUX)…';
+    // 3 variações do letreiro (o FLUX às vezes erra uma letra): a loja sai com a 1ª e você troca no visualizador
     const promptSign = promptLetreiro(plano);
-    const [sinal] = await engine.executar(wf.flux({ prompt: promptSign, largura: 1344, altura: 768, passos: 4, semente: base + 99, prefixo }));
-    const letreiro = await guardar(job, sinal, 'imagem', { modelo: 'flux', prompt: promptSign, semente: base + 99, para3d: true }, 'png');
+    const letreiros = [];
+    for (let v = 0; v < LETREIROS; v++) {
+      if (job.cancelado) return;
+      job.etapa = `Escrevendo o letreiro (FLUX), variação ${v + 1} de ${LETREIROS}…`;
+      const [sinal] = await engine.executar(wf.flux({ prompt: promptSign, largura: 1344, altura: 768, passos: 4, semente: base + 99 + v, prefixo: `${prefixo}_l${v}` }));
+      letreiros.push((await guardar(job, sinal, 'imagem', { modelo: 'flux', prompt: promptSign, semente: base + 99 + v, para3d: true, letreiro: v + 1 }, 'png')).id);
+    }
     await engine.liberar();
     job.etapa = 'Montando a loja por peças (Godot)…';
-    const pasta = join(RAIZ, 'tmp', '3d'); mkdirSync(pasta, { recursive: true });
-    const cfg = join(pasta, job.id + '_fachada.json'); const saida = join(pasta, job.id + '_fachada.glb');
-    writeFileSync(cfg, JSON.stringify(configFachada(plano, texturas, galeria.caminho(letreiro.id))));
-    const r = await limpeza.rodar('fachada_exportar.gd', [cfg, saida]);
-    const item = galeria.salvar({ buffer: readFileSync(saida), ext: 'glb', tipo: '3d', params: {
-      modelo: 'fachada', pedido: `${tipo}: ${marca}`, fachada: plano, previa: letreiro.id, semente: base,
+    const r = await montarFachada(job.id, plano, texturas, galeria.caminho(letreiros[0]));
+    const item = galeria.salvar({ buffer: r.buffer, ext: 'glb', tipo: '3d', params: {
+      modelo: 'fachada', pedido: `${tipo}: ${marca}`, fachada: plano, previa: letreiros[0], letreiros, letreiro_escolhido: 0, texturas: texturasIds, semente: base,
       vocab: { en: plano.tipo_en, pt: plano.tipo_pt, categoria: 'building', medidas_m: { largura: r.tamanho_m[0], profundidade: r.tamanho_m[2], altura: r.tamanho_m[1] } },
+      origem_medidas: revisado ? 'revisao' : 'qwen',
       tamanho: 'fachada', faces: r.faces, tamanho_m: r.tamanho_m, bytes: r.bytes, colisoes: r.colisoes, cor: 'textura', estilo: 'englishquest',
     } });
     job.itens.push(item);
-    for (const f of [cfg, saida]) { try { unlinkSync(f); } catch { /* já foi */ } }
     job.etapa = null;
     // detalhes da calçada (TRELLIS.2): entram na fila depois, um modelo por objeto, com a loja como cenário
     if (detalhes) for (const [i, d] of plano.detalhes.entries()) criar3d({ pedido: d, cor, semente: base + 200 + i, lote: `${plano.tipo_pt} ${plano.marca}` });
   });
 }
 
+const LETREIROS = 3;
+
+// Monta a loja no Godot (fachada_exportar.gd) e devolve o .glb e as medidas.
+async function montarFachada(id, plano, texturas, letreiro) {
+  const pasta = join(RAIZ, 'tmp', '3d'); mkdirSync(pasta, { recursive: true });
+  const cfg = join(pasta, id + '_fachada.json'); const saida = join(pasta, id + '_fachada.glb');
+  writeFileSync(cfg, JSON.stringify(configFachada(plano, texturas, letreiro)));
+  try {
+    const r = await limpeza.rodar('fachada_exportar.gd', [cfg, saida]);
+    return { ...r, buffer: readFileSync(saida) };
+  } finally { for (const f of [cfg, saida]) { try { unlinkSync(f); } catch { /* já foi */ } } }
+}
+
+// Tela de revisão da fachada: o qwen sugere o plano (nomes, tamanho, materiais, cores, detalhes) e você corrige antes.
+rota('POST', '/api/fachada/planejar', async (req, res) => {
+  const b = await lerJson(req);
+  const tipo = texto(b.tipo, 60);
+  const marca = marcaLimpa(b.marca);
+  if (!tipo || !marca) return json(res, { erro: 'Escreva o tipo de loja e o nome da marca.' }, 400);
+  try { json(res, { plano: await descritor.planejarFachada(tipo, marca) }); } catch (e) { json(res, { erro: e.message }, 503); }
+});
+
 rota('POST', '/api/fachada', async (req, res) => {
   const b = await lerJson(req);
   const tipo = texto(b.tipo, 60);
   const marca = marcaLimpa(b.marca);
   if (!tipo || !marca) return json(res, { erro: 'Escreva o tipo de loja e o nome da marca.' }, 400);
-  const t = criarFachada({ tipo, marca, detalhes: b.detalhes !== false, cor: b.cor === 'vertices' ? 'vertices' : 'textura', semente: semente(b.semente) });
+  const revisado = b.plano && typeof b.plano === 'object' ? b.plano : null;
+  if (revisado && (!texto(revisado.tipo_en, 40) || !texto(revisado.tipo_pt, 40))) return json(res, { erro: 'Preencha o nome da loja em inglês e em português.' }, 400);
+  const t = criarFachada({ tipo, marca, detalhes: b.detalhes !== false, cor: b.cor === 'vertices' ? 'vertices' : 'textura', semente: semente(b.semente), revisado });
   json(res, { trabalhos: [t.id] });
+});
+
+// Trocar o letreiro de uma fachada pronta por outra das 3 variações: só remonta no Godot (segundos), sem FLUX nem TRELLIS.2.
+rota('POST', '/api/galeria/:id/letreiro', async (req, res, p) => {
+  const item = galeria.obter(p.id);
+  const b = await lerJson(req);
+  const pr = item?.params || {};
+  const i = Math.floor(Number(b.indice));
+  if (!item || pr.modelo !== 'fachada' || !Array.isArray(pr.letreiros)) return json(res, { erro: 'Esta não é uma fachada com variações de letreiro.' }, 400);
+  if (!(i >= 0 && i < pr.letreiros.length)) return json(res, { erro: 'Variação inválida.' }, 400);
+  const texturas = Object.fromEntries(Object.entries(pr.texturas || {}).map(([slot, id]) => [slot, galeria.caminho(id)]).filter(([, c]) => c));
+  try {
+    const r = await montarFachada(item.id + '_l' + i, pr.fachada, texturas, galeria.caminho(pr.letreiros[i]));
+    json(res, galeria.atualizar(item.id, r.buffer, { letreiro_escolhido: i, previa: pr.letreiros[i], faces: r.faces, bytes: r.bytes, tamanho_m: r.tamanho_m }));
+  } catch (e) { json(res, { erro: e.message }, 500); }
 });
 
 rota('POST', '/api/textura', async (req, res) => {

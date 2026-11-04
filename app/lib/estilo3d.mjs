@@ -1,5 +1,6 @@
 // Regras do "Criar 3D": o estilo travado do EnglishQuest, o peso (faces) por tamanho e a limpeza da descrição que o qwen devolve.
 // Tudo aqui é puro (sem rede nem disco), para ser testado em tools/teste_3d.mjs.
+import { medidaPadrao, tabelaParaPrompt } from './medidas.mjs';
 
 // Estilo fixo, colado no fim de todo prompt de imagem. Combina com os assets atuais do jogo (Quaternius/KayKit, CC0):
 // low poly, formas simples e arredondadas, cores chapadas e foscas, sem texto nem marcas. O usuário não edita isto.
@@ -42,13 +43,19 @@ The user describes ONE object, usually in Portuguese. Answer ONLY with a JSON ob
 "categoria": one of ${CATEGORIAS.join(', ')},
 "medidas_m": {"largura": number, "profundidade": number, "altura": number} — the REAL size of a typical real one, in meters (width left-right, depth front-back, height),
 "descricao_en": one English sentence describing how it looks (shape, parts, materials, colors), with realistic proportions, no background, no style words.
-Use realistic sizes: a cafe table is about 0.7 x 0.7 x 0.75, a motorcycle about 0.8 x 2.0 x 1.1, a medium dog about 0.3 x 0.9 x 0.6, a coffee mug about 0.08 x 0.12 x 0.1, a small shop front facade about 8 x 1.5 x 4.5, a house about 9 x 8 x 6.`;
+The English name must be the correct everyday word. Careful with these: "coleira" = "collar" (a "guia" is a "leash"); "pote de ração" = "dog food bowl";
+"mesa de café" (a small table in a café or bistro) = "cafe table", NOT "coffee table" ("coffee table" is a "mesa de centro" in a living room);
+"xícara" = "cup"; "caneca" = "mug"; "placa de cavalete" = "a-frame sign"; "poste" = "street light"; "lixeira" = "trash can".
+Use realistic sizes. ALWAYS follow this table of standard sizes (width x depth x height, meters) when the object is in it:
+${tabelaParaPrompt()}; a small shop front facade 8 x 1.5 x 4.5; a house 9 x 8 x 6.`;
 
 const limitar = (v, min, max) => Math.min(max, Math.max(min, v));
 const textoLimpo = (v, max) => String(v ?? '').replace(/[\r\n\t"]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 // Confere e corrige a resposta do qwen (que pode vir torta). Nunca lança: o que faltar vira um valor seguro.
-export function normalizarDescricao(bruto, pedido) {
+// `fonte`: 'qwen' (sugestão) ou 'revisao' (você conferiu na tela de revisão: as medidas valem como estão).
+// Se o nome em inglês está na tabela de medidas padrão, a tabela vence o qwen (mas não a sua revisão).
+export function normalizarDescricao(bruto, pedido, fonte = 'qwen') {
   let d = bruto;
   if (typeof d === 'string') {   // pega só o objeto JSON e troca quebras de linha soltas (JSON inválido) por espaço
     try { d = JSON.parse(d.slice(d.indexOf('{'), d.lastIndexOf('}') + 1).replace(/[\u0000-\u001f]+/g, ' ')); } catch { d = {}; }
@@ -56,13 +63,17 @@ export function normalizarDescricao(bruto, pedido) {
   if (!d || typeof d !== 'object') d = {};
   const m = d.medidas_m || d.medidas || {};
   const num = (v, padrao) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? limitar(n, 0.01, 30) : padrao; };
-  const medidas = { largura: num(m.largura ?? m.width, 0.5), profundidade: num(m.profundidade ?? m.depth, 0.5), altura: num(m.altura ?? m.height, 0.5) };
+  let medidas = { largura: num(m.largura ?? m.width, 0.5), profundidade: num(m.profundidade ?? m.depth, 0.5), altura: num(m.altura ?? m.height, 0.5) };
   const categoria = CATEGORIAS.includes(String(d.categoria).toLowerCase()) ? String(d.categoria).toLowerCase() : 'object';
   const nomePt = textoLimpo(d.nome_pt, 60).toLowerCase() || textoLimpo(pedido, 60).toLowerCase();
   const nomeEn = textoLimpo(String(d.nome_en ?? '').replace(/_/g, ' '), 60).toLowerCase() || 'object';
   const descricao = textoLimpo(d.descricao_en, 400) || nomeEn;
+  const padrao = medidaPadrao(nomeEn);
+  let origem = fonte === 'revisao' ? 'revisao' : 'qwen';
+  if (padrao && fonte !== 'revisao') { medidas = padrao.medidas_m; origem = 'tabela'; }
   const tamanho = classeTamanho(medidas, categoria);
-  return { nome_en: nomeEn, nome_pt: nomePt, categoria, medidas_m: medidas, descricao_en: descricao, tamanho, faces: TAMANHOS[tamanho].faces, textura: TAMANHOS[tamanho].textura };
+  return { nome_en: nomeEn, nome_pt: nomePt, categoria, medidas_m: medidas, descricao_en: descricao, tamanho, faces: TAMANHOS[tamanho].faces, textura: TAMANHOS[tamanho].textura,
+    origem_medidas: origem, ...(padrao ? { tabela: { nome: padrao.nome, medidas_m: padrao.medidas_m, nota: padrao.nota } } : {}) };
 }
 
 const cm = (m) => (m >= 1 ? `${+m.toFixed(2)} m` : `${Math.round(m * 100)} cm`);
@@ -84,12 +95,15 @@ export function proporcao({ largura, profundidade, altura }) {
 
 // Correção por eixo na limpeza: depois da escala uniforme, cada eixo vai na direção da medida real, no máximo ±25%
 // (conserta a mesa que o FLUX desenhou baixa sem esticar o modelo). Eixos do Godot: x = largura, y = altura, z = profundidade.
-// Animais não são esticados (formas orgânicas ficam estranhas) e veículos só um pouco.
+// Animais não são esticados (formas orgânicas ficam estranhas) e veículos só um pouco. Quando a medida é confiável
+// (veio da tabela padrão ou você conferiu na revisão), móveis e objetos podem ser corrigidos até 50%: é o que
+// conserta a mesa que o FLUX desenha baixa (a medida estava certa, o desenho é que não).
 export const CORRECAO_MAX = 1.25;
-export function correcaoPara(categoria) {
+export const CORRECAO_CONFIAVEL = 1.5;
+export function correcaoPara(categoria, origem = 'qwen') {
   if (categoria === 'animal') return 1.0;
   if (categoria === 'vehicle') return 1.1;
-  return CORRECAO_MAX;
+  return origem === 'tabela' || origem === 'revisao' ? CORRECAO_CONFIAVEL : CORRECAO_MAX;
 }
 
 // Geração em lote: "loja de pets: cachorro, gato, aquário, ração, coleira" -> contexto + itens (vírgula, ponto e vírgula ou linha).

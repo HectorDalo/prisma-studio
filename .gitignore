@@ -9,3 +9,4 @@ Prisma.exe
 *.log
 config/
 tools/godot_limpeza/.godot/
+backups/

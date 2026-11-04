@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptLetreiro, configFachada } from '../app/lib/estilo3d.mjs';
+import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptLetreiro, configFachada, SISTEMA_DESCRITOR } from '../app/lib/estilo3d.mjs';
 import { trellis3d } from '../app/lib/workflows.mjs';
 import { Limpeza } from '../app/lib/limpeza.mjs';
 
@@ -62,15 +62,46 @@ const destino = join(TMP, 'eq', 'assets', 'prisma');
 mkdirSync(dirname(dirname(destino)), { recursive: true });
 writeFileSync(join(dirname(dirname(destino)), 'project.godot'), '');
 const glbFalso = join(TMP, 'falso.glb'); writeFileSync(glbFalso, 'glTF');
-const ex = new Exportador({ destino });
+const ex = new Exportador({ destino, backups: join(TMP, 'backups') });
 const e1 = ex.exportar(itemFake('aaa111', 'dog collar'), glbFalso);
 ok(e1.nome === 'dog_collar' && existsSync(e1.glb) && JSON.parse(readFileSync(e1.json, 'utf8')).en === 'dog collar', 'exporta <nome>.glb e <nome>.json para assets/prisma');
 const e2 = ex.exportar(itemFake('bbb222', 'dog collar'), glbFalso);
 ok(e2.nome === 'dog_collar_2', 'outro modelo com o mesmo nome não sobrescreve (ganha _2)');
-ok(ex.exportar(itemFake('aaa111', 'dog collar'), glbFalso).nome === 'dog_collar', 'exportar de novo o mesmo item atualiza o dele');
+const e3 = ex.exportar(itemFake('aaa111', 'dog collar'), glbFalso);
+ok(e3.nome === 'dog_collar', 'exportar de novo o mesmo item atualiza o dele');
+ok(e1.backup === null && e3.backup && existsSync(join(e3.backup, 'dog_collar.glb')) && existsSync(join(e3.backup, 'dog_collar.json')), 'antes de trocar, copia os arquivos antigos para o backup (o 1º export não tem o que guardar)');
+const { Galeria } = await import('../app/lib/gallery.mjs');
+const gal = new Galeria(join(TMP, 'galeria'));
+const gi = gal.salvar({ buffer: Buffer.from('a'), ext: 'glb', tipo: '3d', params: { letreiro_escolhido: 0, x: 1 } });
+const gu = gal.atualizar(gi.id, Buffer.from('bb'), { letreiro_escolhido: 2 });
+ok(gu.params.letreiro_escolhido === 2 && gu.params.x === 1 && gu.atualizadoEm && readFileSync(gal.caminho(gi.id)).length === 2, 'trocar o letreiro troca o arquivo e guarda a escolha');
 let recusou = false; try { ex.exportar({ ...itemFake('ccc', 'x'), tipo: 'imagem' }, glbFalso); } catch { recusou = true; }
 ok(recusou, 'imagem não é exportada como modelo');
 ok(!new Exportador({ destino: join(TMP, 'nada', 'assets', 'prisma') }).disponivel() || !!process.env.PRISMA_EQ_ASSETS, 'sem o projeto do jogo, não cria pasta solta');
+
+console.log('tabela de medidas padrão e revisão');
+const { medidaPadrao, MEDIDAS_PADRAO, tabelaParaPrompt } = await import('../app/lib/medidas.mjs');
+ok(medidaPadrao('cafe table').medidas_m.altura === 0.75 && medidaPadrao('wooden cafe table').nome === 'cafe table', 'mesa de café: 0,75 m de altura (também com adjetivo no nome)');
+ok(medidaPadrao('chair').nota.includes('0,45') && medidaPadrao('door').medidas_m.altura === 2.1, 'cadeira com assento a 0,45 m e porta de 2,10 m');
+ok(medidaPadrao('table lamp').nome === 'table lamp' && medidaPadrao('dog food bowl').nome === 'dog food bowl', 'o nome mais comprido ganha ("table lamp" não vira mesa; "dog food bowl" não vira cachorro)');
+ok(medidaPadrao('dog collar').medidas_m.altura < 0.1 && medidaPadrao('leash').nome === 'leash' && medidaPadrao('xyz') === null, 'coleira e guia são itens diferentes; nome desconhecido não acha nada');
+ok(MEDIDAS_PADRAO.every((i) => i.m.length === 3 && i.m.every((x) => x > 0 && x < 20)) && tabelaParaPrompt().includes('cafe table 0.7 x 0.7 x 0.75'), 'tabela válida e no pedido ao qwen');
+ok(/collar/.test(SISTEMA_DESCRITOR) && /leash/.test(SISTEMA_DESCRITOR) && /ALWAYS follow this table/.test(SISTEMA_DESCRITOR), 'o qwen recebe a tabela e o aviso coleira = collar, guia = leash');
+const dt = normalizarDescricao({ nome_en: 'cafe table', nome_pt: 'mesa de café', categoria: 'furniture', medidas_m: { largura: 0.6, profundidade: 0.6, altura: 0.5 } }, 'mesa');
+ok(dt.origem_medidas === 'tabela' && dt.medidas_m.altura === 0.75, 'quando o nome está na tabela, a tabela vence a medida do qwen');
+const dr = normalizarDescricao({ nome_en: 'cafe table', nome_pt: 'mesa de café', categoria: 'furniture', medidas_m: { largura: 0.8, profundidade: 0.8, altura: 0.74 } }, 'mesa', 'revisao');
+ok(dr.origem_medidas === 'revisao' && dr.medidas_m.altura === 0.74 && dr.tabela.medidas_m.altura === 0.75, 'a sua revisão vence a tabela (e a tabela fica como referência)');
+ok(normalizarDescricao({ nome_en: 'spaceship', medidas_m: { largura: 3, profundidade: 5, altura: 2 } }, 'nave').origem_medidas === 'qwen', 'sem item na tabela, fica a sugestão do qwen (para conferir)');
+ok(correcaoPara('furniture', 'tabela') === 1.5 && correcaoPara('furniture', 'revisao') === 1.5 && correcaoPara('furniture', 'qwen') === 1.25 && correcaoPara('animal', 'revisao') === 1, 'medida confiável corrige até 50% (conserta a mesa baixa); animal nunca estica');
+
+console.log('aviso de memória (Elara, Ollama)');
+const { avaliarRecursos } = await import('../app/lib/recursos.mjs');
+const av = avaliarRecursos({ ollama: [{ nome: 'qwen2.5:7b', vramGB: 4.8 }], elara: [{ pid: 1, ramMB: 2400 }], vram: { usadaGB: 7.4, totalGB: 8 }, motorGB: 0 });
+ok(av.some((a) => a.tipo === 'ollama' && a.acao) && av.some((a) => a.tipo === 'elara' && a.acao === 'Fechar a Elara'), 'avisa o qwen na placa e a Elara aberta, com botão para liberar');
+ok(!av.some((a) => a.tipo === 'placa'), 'o que o qwen ocupa não conta como "outros programas"');
+ok(avaliarRecursos({ vram: { usadaGB: 3.5, totalGB: 8 }, motorGB: 1.0 }).some((a) => a.tipo === 'placa'), 'avisa quando outros programas ocupam a placa');
+ok(avaliarRecursos({ vram: { usadaGB: 6.5, totalGB: 8 }, motorGB: 6.0 }).length === 0, 'a placa ocupada pelo próprio Prisma não gera aviso');
+ok(!avaliarRecursos({ ollama: [{ nome: 'qwen2.5:7b', vramGB: 4.8 }], ocupado: true }).some((a) => a.tipo === 'ollama'), 'com a fila rodando, o qwen do próprio Prisma não vira aviso');
 
 console.log('modo fachada (plano do qwen)');
 const pf = normalizarFachada('ok {"tipo_en":"Pet Shop","tipo_pt":"Loja de pets","largura_m":"14","altura_m":2,"parede":"light blue painted wooden clapboard siding","toldo":["#1e88e5","#ffffff"],"detalhes":["vaso","banco","placa","extra"]}', 'loja de pets', 'Patinhas "Felizes"');

@@ -157,9 +157,11 @@ function abrirLuz(item, aoMudar) {
     par('Arquivo', p.bytes ? `${(p.bytes / 1024 / 1024).toFixed(1)} MB` : null);
     par('Cor', p.cor === 'vertices' ? 'por vértice' : 'textura');
     par('Cenário', p.lote);
+    par('Medidas', { tabela: 'tabela padrão', revisao: 'conferidas por você', qwen: 'sugeridas pelo qwen' }[p.origem_medidas]);
   }
   par('Criada em', new Date(item.criadoEm).toLocaleString('pt-BR'));
-  const url = `/api/galeria/${item.id}/arquivo`;
+  // o arquivo pode ter sido trocado (fachada com outro letreiro): a versão no endereço evita o cache antigo
+  const url = `/api/galeria/${item.id}/arquivo${item.atualizadoEm ? '?v=' + encodeURIComponent(item.atualizadoEm) : ''}`;
   const acao = (rotulo, fn, extra = '') => h('button', { class: 'secundario ' + extra, on: { click: fn } }, rotulo);
   const ehImagem = item.tipo !== 'video' && item.tipo !== '3d';
   const botoes = [
@@ -199,8 +201,28 @@ function abrirLuz(item, aoMudar) {
       p.pedido ? h('p', {}, h('b', {}, 'Seu pedido: '), p.pedido) : null,
       p.promptOriginal ? h('p', {}, h('b', {}, 'Seu texto: '), p.promptOriginal) : null,
       p.prompt ? h('p', {}, p.promptOriginal ? h('b', {}, 'Prompt usado (inglês): ') : null, p.prompt) : null,
-      h('dl', {}, ...linhas), h('div', { class: 'barra-acoes', style: 'flex-direction:column' }, ...botoes)),
+      h('dl', {}, ...linhas), escolhaLetreiro(item, () => { fechar(); abrirLuz(galeriaItem(item.id) || item, aoMudar); }),
+      h('div', { class: 'barra-acoes', style: 'flex-direction:column' }, ...botoes)),
   );
+}
+
+// Fachada: as 3 variações do letreiro que o FLUX fez; clicar remonta a loja com a escolhida (segundos, só no Godot).
+const itensAtualizados = new Map();
+const galeriaItem = (id) => itensAtualizados.get(id);
+function escolhaLetreiro(item, reabrir) {
+  const p = item.params || {};
+  if (p.modelo !== 'fachada' || !Array.isArray(p.letreiros)) return null;
+  const escolhido = p.letreiro_escolhido || 0;
+  return h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Letreiro (escolha o que saiu escrito certo)'),
+    h('div', { class: 'letreiros' }, ...p.letreiros.map((id, i) => h('button', {
+      class: 'letreiro' + (i === escolhido ? ' on' : ''), type: 'button', title: i === escolhido ? 'Em uso' : 'Usar este letreiro',
+      on: { click: async (ev) => {
+        if (i === escolhido) return;
+        ev.currentTarget.disabled = true;
+        try { const novo = await postar(`/api/galeria/${item.id}/letreiro`, { indice: i }); itensAtualizados.set(item.id, novo); aviso('Letreiro trocado: a loja foi montada de novo.'); reabrir(); }
+        catch (e) { aviso(e.message, true); ev.currentTarget.disabled = false; }
+      } },
+    }, h('img', { src: `/api/galeria/${id}/arquivo`, alt: `variação ${i + 1}` }), h('span', {}, i === escolhido ? 'em uso' : `variação ${i + 1}`)))));
 }
 
 function reutilizar(item) {
@@ -364,36 +386,52 @@ function renderVideo() {
 }
 
 // ---------------------------------------------------------------- vista: criar 3D
+// usados pela tela de revisão do Criar 3D
+const num = (v) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : null; };
+const CATEG = ['furniture', 'vehicle', 'animal', 'food', 'drink', 'plant', 'clothing', 'tool', 'electronics', 'decoration', 'building', 'object'];
+const ORIGEM = { tabela: 'medidas da tabela padrão', qwen: 'medidas sugeridas pelo qwen: confira', revisao: 'medidas conferidas por você' };
+
 function render3d() {
   const f = form['3d'];
   const raiz = h('div', {});
   const pronto = estado.status?.modelos?.['3d'] !== false;
   const lote = () => f.modo === 'lote';
   const fach = () => f.modo === 'fachada';
-  const campoTipo = h('input', { type: 'text', placeholder: 'Ex.: café, padaria, loja de pets', value: f.tipo || '', on: { input: (e) => { f.tipo = e.target.value; salvarForm(); } } });
-  const campoMarca = h('input', { type: 'text', maxLength: 28, placeholder: 'Ex.: Hazelbrook Coffee (invente um nome)', value: f.marca || '', on: { input: (e) => { f.marca = e.target.value; salvarForm(); } } });
+  const campoTipo = h('input', { type: 'text', placeholder: 'Ex.: café, padaria, loja de pets', value: f.tipo || '', on: { input: (e) => { f.tipo = e.target.value; salvarForm(); fecharRevisao(); } } });
+  // o FLUX erra acentos no letreiro ("Pão" sai "Páo"); a cidade é americana, então nomes em inglês sem acento funcionam melhor
+  const dicaMarca = h('div', { class: 'dica' });
+  const pintarDicaMarca = () => {
+    const acento = /[^\x00-\x7f]/.test(f.marca || '');
+    dicaMarca.textContent = acento ? 'Atenção: o FLUX costuma errar letras com acento (ã, é, ç) no letreiro. Para uma loja de cidade americana, prefira um nome em inglês sem acento.'
+      : 'Invente o nome (nada de marca real). O FLUX escreve no letreiro (3 variações; você escolhe a certa); nomes curtos saem com menos erro.';
+    dicaMarca.style.color = acento ? '#eab308' : '';
+  };
+  const campoMarca = h('input', { type: 'text', maxLength: 28, placeholder: 'Ex.: Hazelbrook Coffee (invente um nome)', value: f.marca || '', on: { input: (e) => { f.marca = e.target.value; salvarForm(); fecharRevisao(); pintarDicaMarca(); } } });
+  pintarDicaMarca();
   const campoDetalhes = h('label', { class: 'marca-check' }, h('input', { type: 'checkbox', checked: f.detalhes !== false, on: { change: (e) => { f.detalhes = e.target.checked; salvarForm(); } } }), 'Criar também os detalhes da calçada (mesinhas, vasos, placa) no TRELLIS.2');
   const blocoFachada = h('div', {},
     h('div', { class: 'campo' }, h('label', {}, 'Tipo de loja'), campoTipo),
-    h('div', { class: 'campo' }, h('label', {}, 'Nome da marca'), campoMarca,
-      h('div', { class: 'dica' }, 'Invente o nome (nada de marca real). O FLUX escreve no letreiro; nomes curtos saem com menos erro.')),
+    h('div', { class: 'campo' }, h('label', {}, 'Nome da marca'), campoMarca, dicaMarca),
     h('div', { class: 'campo' }, campoDetalhes));
   const dicaPeso = h('div', { class: 'dica', style: 'margin:0' });
   const blocoCor = h('div', { class: 'campo' });
-  const area = h('textarea', { rows: 3, value: lote() ? (f.lista || '') : f.pedido, on: { input: (e) => { if (lote()) f.lista = e.target.value; else f.pedido = e.target.value; salvarForm(); contar(); } } });
+  const area = h('textarea', { rows: 3, value: lote() ? (f.lista || '') : f.pedido, on: { input: (e) => { if (lote()) f.lista = e.target.value; else f.pedido = e.target.value; salvarForm(); fecharRevisao(); contar(); } } });
   const rotuloArea = h('label', {});
   const dicaArea = h('div', { class: 'dica' });
-  const botao = h('button', { class: 'principal', disabled: !pronto, on: { click: criar } }, 'Criar modelo 3D');
+  const botao = h('button', { class: 'principal', disabled: !pronto, on: { click: revisar } }, 'Revisar nome e medidas');
+  const blocoRevisao = h('div', { class: 'revisao', hidden: true });
+  const blocoRecursos = h('div', { class: 'recursos', hidden: true });
   // conta os itens do lote como o servidor conta (vírgula, ponto e vírgula ou linha; "cenário:" no começo)
   const itensLote = (t) => { let s = String(t || ''); const i = s.indexOf(':'); if (i > 0 && i < 60 && !/[,;\n]/.test(s.slice(0, i))) s = s.slice(i + 1); return [...new Set(s.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))]; };
   function contar() {
-    if (fach()) { botao.textContent = 'Criar fachada'; return; }
-    if (!lote()) { botao.textContent = 'Criar modelo 3D'; return; }
+    if (fach()) { botao.textContent = 'Revisar o plano da loja'; return; }
+    if (!lote()) { botao.textContent = 'Revisar nome e medidas'; return; }
     const n = Math.min(20, itensLote(f.lista).length);
-    botao.textContent = n > 1 ? `Criar ${n} modelos 3D` : 'Criar modelo 3D';
+    botao.textContent = n > 1 ? `Revisar os ${n} nomes e medidas` : 'Revisar nome e medidas';
     dicaArea.textContent = n ? `${n} ${n === 1 ? 'objeto' : 'objetos'} na fila, um de cada vez (até 20). Cada um leva de 8 a 25 minutos.` : 'Separe os objetos por vírgula. O cenário antes dos dois-pontos ajuda o qwen a acertar o tipo.';
   }
   function pintarModo() {
+    fecharRevisao();
     rotuloArea.textContent = lote() ? 'Lista de objetos' : 'O que você quer criar';
     area.placeholder = lote() ? 'Ex.: loja de pets: cachorro, gato, aquário, ração, coleira' : 'Ex.: uma mesa de café redonda de madeira';
     area.value = lote() ? (f.lista || '') : f.pedido;
@@ -409,6 +447,7 @@ function render3d() {
     h('div', { class: 'dica' }, 'Textura: mais detalhe. Cor por vértice: arquivo menor, cores mais chapadas.'));
   campoDetalhes.querySelector('input').addEventListener('change', pintarModo);
   const painel = h('div', { class: 'cartao' },
+    blocoRecursos,
     h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'O que criar'),
       fichas([['um', 'Um objeto'], ['lote', 'Lista (lote)'], ['fachada', 'Fachada de loja']], f.modo || 'um', (v) => { f.modo = v; salvarForm(); pintarModo(); })),
     campoTexto, blocoFachada, blocoCor,
@@ -417,35 +456,134 @@ function render3d() {
     h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Peso'), dicaPeso),
     h('details', {}, h('summary', {}, 'Ajustes avançados'), h('div', { class: 'campo' }, h('label', {}, 'Semente (vazio = aleatória)'),
       h('input', { type: 'text', inputMode: 'numeric', value: f.semente, placeholder: 'aleatória', on: { input: (e) => { f.semente = e.target.value.replace(/\D/g, ''); salvarForm(); } } }))),
-    botao,
+    botao, blocoRevisao,
     pronto ? h('div', { class: 'dica' }, 'Leva de 8 a 25 minutos por modelo na RTX 2070. Pode deixar vários na fila.')
       : h('div', { class: 'dica', style: 'color:var(--erro)' }, 'Faltam arquivos: TRELLIS.2, FLUX, o Ollama da Elara ou o Godot.'));
   pintarModo();
+  verRecursos();
   raiz.append(h('h1', {}, 'Criar 3D'), h('p', { class: 'sub' }, 'Modelos 3D (.glb) prontos para o Godot, no tamanho real e com a base no chão: descrição com medidas, imagem no FLUX, fundo removido e modelo no TRELLIS.2. Tudo no seu computador.'),
     h('div', { class: 'vista' }, painel, h('div', { id: 'resultados' })));
   return raiz;
 
-  async function criar() {
+  // ---- aviso de quem ocupa a placa e a RAM (Elara, Ollama) e o botão de liberar
+  async function verRecursos() {
+    let r;
+    try { r = await api('/api/recursos'); } catch { blocoRecursos.hidden = true; return []; }
+    blocoRecursos.replaceChildren();
+    blocoRecursos.hidden = !r.avisos.length;
+    if (!r.avisos.length) return [];
+    blocoRecursos.append(h('b', {}, 'Antes de gerar, libere a memória'), ...r.avisos.map((a) => h('div', { class: 'linha-recurso' }, h('span', {}, a.texto),
+      a.acao ? h('button', { class: 'secundario', type: 'button', on: { click: () => liberar(a.tipo === 'elara') } }, a.acao) : null)),
+      h('div', { class: 'dica' }, 'O FLUX e o TRELLIS.2 precisam de quase toda a placa (8 GB) e de bastante RAM. Com a Elara ou o qwen carregados, o 3D fica até 5 vezes mais lento.'));
+    return r.avisos;
+  }
+  async function liberar(elara) {
+    if (elara && !confirm('Fechar a Elara Voz? Ela para de ouvir até você abrir de novo (Iniciar Elara.bat).')) return;
+    try { const r = await postar('/api/recursos/liberar', { elara }); aviso(r.elaraFechada ? 'Elara fechada e placa liberada.' : 'Placa liberada.'); } catch (e) { aviso(e.message, true); }
+    verRecursos();
+  }
+
+  // ---- tela de revisão: o qwen sugere, você corrige o nome (é um jogo de ensinar inglês) e as medidas
+  function fecharRevisao() { blocoRevisao.hidden = true; blocoRevisao.replaceChildren(); botao.hidden = false; }
+
+  // campos editáveis de um objeto; devolve { no, ler() }
+  function camposObjeto(pedido, d) {
+    const en = h('input', { type: 'text', value: d.nome_en, maxLength: 60 });
+    const pt = h('input', { type: 'text', value: d.nome_pt, maxLength: 60 });
+    const cat = h('select', {}, ...CATEG.map((c) => h('option', { value: c, selected: c === d.categoria }, c)));
+    const m = d.medidas_m;
+    const med = ['largura', 'profundidade', 'altura'].map((k) => h('input', { type: 'number', min: 0.01, max: 30, step: 0.01, value: m[k], title: k }));
+    const desc = h('textarea', { rows: 2, value: d.descricao_en });
+    const origem = h('span', { class: 'origem ' + (d.origem_medidas || 'qwen') }, ORIGEM[d.origem_medidas] || ORIGEM.qwen, d.tabela?.nota ? ` · ${d.tabela.nota}` : '');
+    for (const i of med) i.addEventListener('input', () => { origem.className = 'origem revisao'; origem.textContent = ORIGEM.revisao; });
+    const no = h('div', { class: 'item-revisao' },
+      h('div', { class: 'dica', style: 'margin:0 0 6px' }, h('b', {}, 'Pedido: '), pedido),
+      h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Inglês (o que o jogo ensina)'), en), h('div', { class: 'campo' }, h('label', {}, 'Português'), pt)),
+      h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Largura (m)'), med[0]), h('div', { class: 'campo' }, h('label', {}, 'Profundidade (m)'), med[1]),
+        h('div', { class: 'campo' }, h('label', {}, 'Altura (m)'), med[2])),
+      origem,
+      h('details', {}, h('summary', {}, 'Categoria e descrição em inglês (para o desenho)'), h('div', { class: 'campo' }, h('label', {}, 'Categoria'), cat), h('div', { class: 'campo' }, desc)));
+    const ler = () => ({ nome_en: en.value.trim().toLowerCase(), nome_pt: pt.value.trim().toLowerCase(), categoria: cat.value, descricao_en: desc.value.trim(),
+      medidas_m: { largura: num(med[0].value), profundidade: num(med[1].value), altura: num(med[2].value) } });
+    return { no, ler };
+  }
+
+  function abrirRevisao(titulo, conteudo, rotuloConfirmar, confirmar) {
+    const ok = h('button', { class: 'principal', type: 'button', on: { click: async () => { ok.disabled = true; try { await confirmar(); fecharRevisao(); } catch (e) { aviso(e.message, true); ok.disabled = false; } } } }, rotuloConfirmar);
+    blocoRevisao.replaceChildren(h('h3', {}, titulo), ...conteudo,
+      h('div', { class: 'barra-acoes' }, ok, h('button', { class: 'secundario', type: 'button', on: { click: fecharRevisao } }, 'Voltar')));
+    blocoRevisao.hidden = false; botao.hidden = true;
+    blocoRevisao.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function revisar() {
     const semente = f.semente === '' ? null : Number(f.semente);
-    if (fach()) {
-      if (!String(f.tipo || '').trim() || !String(f.marca || '').trim()) return aviso('Escreva o tipo de loja e o nome da marca.', true);
-      botao.disabled = true;
-      try {
-        const r = await postar('/api/fachada', { tipo: f.tipo, marca: f.marca, detalhes: f.detalhes !== false, cor: f.cor, semente });
-        for (const id of r.trabalhos) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }
-        atualizarResultados();
-      } catch (e) { aviso(e.message, true); } finally { botao.disabled = !pronto; }
-      return;
+    if (fach() ? !String(f.tipo || '').trim() || !String(f.marca || '').trim() : lote() ? !itensLote(f.lista).length : !f.pedido.trim()) {
+      return aviso(fach() ? 'Escreva o tipo de loja e o nome da marca.' : lote() ? 'Escreva a lista de objetos.' : 'Descreva o objeto.', true);
     }
-    if (lote() ? !itensLote(f.lista).length : !f.pedido.trim()) return aviso(lote() ? 'Escreva a lista de objetos.' : 'Descreva o objeto.', true);
-    botao.disabled = true;
+    const avisos = await verRecursos();
+    if (avisos.some((a) => a.tipo !== 'placa') && !confirm('A Elara ou o qwen estão ocupando a placa (veja o aviso em cima). Continuar mesmo assim?')) return;
+    botao.disabled = true; const antes = botao.textContent; botao.textContent = 'O qwen está pensando… (10 a 30 s)';
     try {
-      const r = lote() ? await postar('/api/3d/lote', { lista: f.lista, cor: f.cor, semente }) : await postar('/api/3d', { pedido: f.pedido, cor: f.cor, semente });
-      for (const id of [...r.trabalhos].reverse()) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }   // em cima, na ordem da lista
-      if (r.cortados) aviso(`Só os 20 primeiros foram para a fila (${r.cortados} ficaram de fora).`, true);
-      else if (lote()) aviso(`${r.trabalhos.length} modelos na fila${r.contexto ? ' para ' + r.contexto : ''}.`);
-      atualizarResultados();
-    } catch (e) { aviso(e.message, true); } finally { botao.disabled = !pronto; }
+      if (fach()) {
+        const { plano } = await postar('/api/fachada/planejar', { tipo: f.tipo, marca: f.marca });
+        const c = camposFachada(plano);
+        abrirRevisao(`Revise a loja "${plano.marca}"`, [c.no], 'Criar fachada', async () => {
+          const pl = c.ler();
+          if (!pl.tipo_en || !pl.tipo_pt) throw new Error('Preencha o nome da loja em inglês e em português.');
+          const r = await postar('/api/fachada', { tipo: f.tipo, marca: f.marca, detalhes: f.detalhes !== false, cor: f.cor, semente, plano: pl });
+          for (const id of r.trabalhos) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }
+          atualizarResultados();
+        });
+      } else if (lote()) {
+        const r = await postar('/api/3d/lote/descrever', { lista: f.lista });
+        let itens = r.itens.map((x) => ({ pedido: x.pedido, ...camposObjeto(x.pedido, x.desc) }));
+        const lista = h('div', { class: 'lista-revisao' });
+        const pintar = () => lista.replaceChildren(...itens.map((x) => { const tirar = h('button', { class: 'sutil', type: 'button', title: 'Tirar da lista', on: { click: () => { itens = itens.filter((y) => y !== x); pintar(); } } }, 'Tirar');
+          const n = x.no; if (!n.querySelector('.sutil')) n.prepend(tirar); return n; }));
+        pintar();
+        abrirRevisao(`Revise os ${itens.length} objetos${r.contexto ? ' de ' + r.contexto : ''}`, [lista], 'Criar todos', async () => {
+          const lidos = itens.map((x) => ({ pedido: x.pedido, revisado: x.ler() }));
+          if (!lidos.length) throw new Error('A lista ficou vazia.');
+          if (lidos.some((x) => !x.revisado.nome_en || !x.revisado.nome_pt)) throw new Error('Preencha o nome em inglês e em português de todos.');
+          const q = await postar('/api/3d/lote', { itens: lidos, contexto: r.contexto, cor: f.cor, semente });
+          for (const id of [...q.trabalhos].reverse()) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }
+          aviso(`${q.trabalhos.length} modelos na fila.`);
+          atualizarResultados();
+        });
+      } else {
+        const r = await postar('/api/3d/descrever', { pedido: f.pedido });
+        const c = camposObjeto(r.pedido, r.desc);
+        abrirRevisao('Revise antes de gerar', [c.no], 'Criar modelo 3D', async () => {
+          const rev = c.ler();
+          if (!rev.nome_en || !rev.nome_pt) throw new Error('Preencha o nome em inglês e em português.');
+          const q = await postar('/api/3d', { pedido: f.pedido, cor: f.cor, semente, revisado: rev });
+          for (const id of q.trabalhos) { const e = {}; sessao['3d'].unshift(e); acompanhar(e, id); }
+          atualizarResultados();
+        });
+      }
+    } catch (e) { aviso(e.message, true); } finally { botao.disabled = !pronto; botao.textContent = antes; }
+  }
+
+  // campos editáveis do plano da fachada
+  function camposFachada(p) {
+    const t = (v, max = 160) => h('input', { type: 'text', value: v ?? '', maxLength: max });
+    const en = t(p.tipo_en, 40); const pt = t(p.tipo_pt, 40);
+    const larg = h('input', { type: 'number', min: 6, max: 10, step: 0.1, value: p.largura_m });
+    const alt = h('input', { type: 'number', min: 4, max: 6, step: 0.1, value: p.altura_m });
+    const mats = ['parede', 'lateral', 'madeira', 'piso'].map((k) => [k, t(p[k])]);
+    const cores = p.toldo.map((c) => h('input', { type: 'color', value: c, class: 'cor-toldo' }));
+    const det = t((p.detalhes || []).join(', '), 200);
+    const ROT = { parede: 'Parede da frente', lateral: 'Paredes do lado', madeira: 'Madeira (rodapé e moldura)', piso: 'Piso de dentro' };
+    const no = h('div', { class: 'item-revisao' },
+      h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Tipo de loja em inglês'), en), h('div', { class: 'campo' }, h('label', {}, 'Em português'), pt)),
+      h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Largura (m)'), larg), h('div', { class: 'campo' }, h('label', {}, 'Altura (m)'), alt),
+        h('div', { class: 'campo' }, h('label', {}, 'Toldo'), h('div', { style: 'display:flex;gap:6px' }, ...cores))),
+      h('details', {}, h('summary', {}, 'Materiais (texto em inglês para o FLUX)'), ...mats.map(([k, i]) => h('div', { class: 'campo' }, h('label', {}, ROT[k]), i))),
+      h('div', { class: 'campo' }, h('label', {}, 'Detalhes da calçada (separados por vírgula)'), det));
+    const ler = () => ({ ...p, tipo_en: en.value.trim().toLowerCase(), tipo_pt: pt.value.trim().toLowerCase(), largura_m: num(larg.value), altura_m: num(alt.value),
+      ...Object.fromEntries(mats.map(([k, i]) => [k, i.value.trim()])), toldo: cores.map((c) => c.value), detalhes: det.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3) });
+    return { no, ler };
   }
 }
 
