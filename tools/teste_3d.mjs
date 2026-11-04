@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptLetreiro, configFachada, SISTEMA_DESCRITOR } from '../app/lib/estilo3d.mjs';
+import { ESTILO_EQ, classeTamanho, normalizarDescricao, promptImagem, nomeArquivo, TAMANHOS, proporcao, correcaoPara, lerLote, pedidoDoLote, vocabExportado, precisaCostura, normalizarFachada, marcaLimpa, promptPlaca, configFachada, SISTEMA_DESCRITOR, escolherVariacao, normalizarVariacao } from '../app/lib/estilo3d.mjs';
 import { trellis3d } from '../app/lib/workflows.mjs';
 import { Limpeza } from '../app/lib/limpeza.mjs';
 
@@ -109,10 +109,17 @@ ok(pf.tipo_en === 'pet shop' && pf.tipo_pt === 'loja de pets' && pf.largura_m ==
 ok(pf.parede.includes('clapboard') && pf.lateral.length > 5 && pf.piso.length > 5 && pf.toldo[0] === '#1e88e5' && pf.detalhes.length === 3, 'materiais, cores do toldo e até 3 detalhes (o que faltar tem padrão)');
 ok(pf.marca === 'Patinhas Felizes' && marcaLimpa('a'.repeat(50)).length === 28, 'marca sem aspas nem quebras, até 28 letras');
 ok(normalizarFachada('nada', 'padaria', 'Pão Bom').toldo.length === 2 && normalizarFachada({ toldo: ['vermelho', 'x'] }, 'x', 'y').toldo[0] === '#2f6e4f', 'resposta torta e cor inválida viram padrão');
-const pl = promptLetreiro(pf);
-ok(pl.includes('"Patinhas Felizes"') && /spelled exactly/.test(pl) && /no wall/.test(pl), 'letreiro: a marca vai entre aspas, soletrada, sem parede');
-const cf = configFachada(pf, { tijolo: 'a.png' }, 'l.png');
-ok(cf.largura === 10 && cf.altura === 4 && cf.letreiro === 'l.png' && cf.toldo[1] === '#ffffff', 'config para o Godot montar a loja');
+const pl = promptPlaca(pf);
+ok(!pl.includes('Patinhas') && /no text, no letters/.test(pl) && /no wall/.test(pl), 'placa: o FLUX faz só a placa, sem o nome (quem escreve é o Godot)');
+ok(pf.telhado.length > 5, 'telhado tem material próprio (não é o piso de madeira)');
+const va = escolherVariacao(123), vb = escolherVariacao(123);
+ok(JSON.stringify(va) === JSON.stringify(vb) && [1, 2].includes(va.andares) && ['tijolo', 'reboco'].includes(va.laterais), 'variação sorteada pela semente: a mesma semente dá a mesma loja');
+const todas = Array.from({ length: 40 }, (_, i) => escolherVariacao(i + 1));
+ok(todas.some((v) => v.andares === 2) && todas.some((v) => v.andares === 1) && todas.some((v) => v.degrau) && todas.some((v) => !v.calha), 'as lojas variam (1 ou 2 andares, com e sem degrau, calha...)');
+ok(normalizarVariacao({ andares: '2', laterais: 'x', rodape: 1 }).andares === 2 && normalizarVariacao({}).laterais === 'reboco', 'variação revisada é conferida');
+const cf = configFachada({ ...pf, variacao: { andares: 2, laterais: 'tijolo', rodape: true, calha: false, degrau: true } }, { tijolo: 'a.png' }, 'l.png', 2);
+ok(cf.largura === 10 && cf.altura === 4 && cf.letreiro === 'l.png' && cf.toldo[1] === '#ffffff' && cf.marca === 'Patinhas Felizes' && cf.fonte === 2, 'config para o Godot: placa, nome e fonte da variação');
+ok(cf.andares === 2 && cf.laterais === 'tijolo' && cf.rodape && cf.degrau && !cf.calha, 'config leva a variação (andares, laterais, rodapé, calha, degrau)');
 const pedidosF = [];
 const falsoF = http.createServer((req, res) => {
   let c = ''; req.on('data', (x) => (c += x)); req.on('end', () => {
@@ -224,10 +231,19 @@ if (!limpeza.disponivel()) { ok(false, 'Godot encontrado em ' + limpeza.godot); 
   ok(f.deslocar_certo && f.emenda_some_ao_deslocar, 'deslocar meia volta deixa as bordas contínuas');
   ok(f.mascara_cruz, 'a máscara é a cruz do meio (só ela é repintada)');
   ok(f.mascara_fundo, 'máscara de prédio: fundo liso fora, parede lisa dentro (o BiRefNet tiraria a parede)');
+  ok(f.degrau_entra && f.degrau_piso, 'com degrau na porta: o corpo sobe a rampa e entra; o piso de dentro fica na altura do degrau');
+  ok(f.dois_andares_altura > 7 && f.dois_andares_janelas, `2 andares: ${f.dois_andares_altura} m de altura, com janelas em cima`);
+  ok(f.texto_existe && f.texto_na_placa && f.texto_acento, 'o nome é escrito pelo Godot na placa, com acento ("Pão da Vila")');
+  ok(f.laterais_tijolo, 'laterais e fundo com acabamento por fora (tijolo) e reboco por dentro');
   const cfgF = join(TMP, 'fachada.json'); const glbF = join(TMP, 'fachada.glb');
   writeFileSync(cfgF, JSON.stringify({ largura: 7, altura: 4.5, toldo: ['#1e88e5', '#ffffff'] }));
   const ex2 = await limpeza.rodar('fachada_exportar.gd', [cfgF, glbF]);
   ok(existsSync(glbF) && ex2.colisoes >= 10 && Math.abs(ex2.tamanho_m[1] - 4.68) < 0.3 && ex2.faces < 2000, `exporta a loja: ${ex2.faces} faces, ${ex2.colisoes} caixas de colisão "-colonly"`);
+  ok(ex2.no_arquivo.colisao_invisivel, 'as caixas de colisão vão invisíveis no .glb (eram elas as manchas pontilhadas e as laterais brancas)');
+  writeFileSync(cfgF, JSON.stringify({ largura: 8, altura: 4.4, marca: 'Pão da Vila', fonte: 1, andares: 2, degrau: true, calha: true, rodape: true, laterais: 'tijolo' }));
+  const ex3 = await limpeza.rodar('fachada_exportar.gd', [cfgF, glbF]);
+  ok(ex3.no_arquivo.texto && ex3.faces_texto > 50 && ex3.faces_texto < 4000 && ex3.colisoes > ex2.colisoes, `letreiro escrito vai no .glb (${ex3.faces_texto} faces de letras), com a rampa e as janelas de cima na colisão`);
+  ok(ex3.bytes < 3 * 1024 * 1024, `loja de 2 andares continua leve: ${(ex3.bytes / 1024 / 1024).toFixed(1)} MB`);
   try { await limpeza.limpar(join(TMP, 'nao_existe.glb'), join(TMP, 'x.glb'), 1); ok(false, 'arquivo inexistente dá erro'); } catch (e) { ok(/não consegui ler/.test(e.message), 'arquivo inexistente dá erro claro'); }
 }
 

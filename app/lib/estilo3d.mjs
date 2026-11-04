@@ -158,6 +158,7 @@ The user gives the kind of shop (usually in Portuguese) and the invented brand n
 "lateral": material of the side walls, plain and smooth (e.g. "smooth cream painted stucco plaster wall"),
 "madeira": material of the trim and the panel under the windows (e.g. "dark green painted vertical wooden planks"),
 "piso": the floor inside (e.g. "warm honey colored wooden floor boards seen from above", "black and white checkered floor tiles"),
+"telhado": the flat roof seen from above (e.g. "dark gray asphalt roof shingles", "terracotta clay roof tiles", "gray concrete roof slab with tar seams"),
 "toldo": two hex colors for the striped awning, chosen for THIS shop and brand (a pet shop, a bakery and a bookstore must not share colors),
 "letreiro_fundo": the sign background color in English words,
 "letreiro_texto": the sign letters color in English words, with strong contrast to the background,
@@ -183,19 +184,38 @@ export function normalizarFachada(bruto, tipo, marca) {
     marca: marcaLimpa(marca), largura_m: +num(d.largura_m, 6, 10, 8).toFixed(1), altura_m: +num(d.altura_m, 4, 6, 4.4).toFixed(1),
     parede: material(d.parede, 'red brick wall with light gray mortar'), lateral: material(d.lateral, 'smooth cream painted stucco plaster wall'),
     madeira: material(d.madeira, 'dark green painted vertical wooden planks'), piso: material(d.piso, 'warm honey colored wooden floor boards seen from above'),
+    telhado: material(d.telhado, 'dark gray asphalt roof shingles seen from above'),
+    ...(d.variacao && typeof d.variacao === 'object' ? { variacao: normalizarVariacao(d.variacao) } : {}),
     toldo, letreiro_fundo: textoLimpo(d.letreiro_fundo, 30) || 'dark green', letreiro_texto: textoLimpo(d.letreiro_texto, 30) || 'cream', detalhes,
   };
 }
 
-// Letreiro: o FLUX escreve a marca (a fonte e as cores vêm do plano). Fundo liso escuro em volta: a montagem recorta a placa.
-export function promptLetreiro(plano) {
-  return `a long wooden shop sign board with the brand name "${plano.marca}" written as big elegant ${plano.letreiro_texto} serif letters, spelled exactly "${plano.marca}", `
-    + `on a ${plano.letreiro_fundo} background, thin gold border, sign of a ${plano.tipo_en}, flat front view, the sign fills the whole image edge to edge, plain dark background around it, no wall, stylized game asset`;
+// Placa do letreiro: o FLUX faz só a placa, SEM texto (ele erra letras e acentos: "Pão" saía "Páo"). O nome é escrito
+// depois pelo Godot com uma fonte de verdade. Fundo liso escuro em volta: a montagem recorta a placa.
+export function promptPlaca(plano) {
+  return `a blank empty wooden shop sign board for a ${plano.tipo_en}, no text, no letters, no words, no logo, plain ${plano.letreiro_fundo} painted surface `
+    + 'with a thin decorative border, flat front view, the sign board fills most of the image, plain dark background around it, no wall, stylized game asset';
 }
 
-// Config que o Godot (tools/godot_limpeza/fachada_b.gd) usa para montar a loja.
-export function configFachada(plano, texturas, letreiro) {
-  return { largura: plano.largura_m, altura: plano.altura_m, texturas, letreiro, toldo: plano.toldo };
+// Variação da construção por loja, sorteada pela semente (a mesma semente dá a mesma loja): andares, acabamento das laterais,
+// rodapé, calha e degrau. Você pode mudar na tela de revisão.
+export function escolherVariacao(semente) {
+  let x = (Math.floor(Math.abs(Number(semente) || 1)) % 2147483647) || 1;
+  const sorteio = () => { x = (x * 48271) % 2147483647; return x / 2147483647; };
+  sorteio();
+  return { andares: sorteio() < 0.5 ? 1 : 2, laterais: sorteio() < 0.5 ? 'tijolo' : 'reboco', rodape: sorteio() < 0.6, calha: sorteio() < 0.6, degrau: sorteio() < 0.5 };
+}
+
+export function normalizarVariacao(v) {
+  return { andares: Number(v?.andares) === 2 ? 2 : 1, laterais: v?.laterais === 'tijolo' ? 'tijolo' : 'reboco', rodape: !!v?.rodape, calha: !!v?.calha, degrau: !!v?.degrau };
+}
+
+export const FONTES_LETREIRO = ['Lilita One', 'Pacifico', 'Alfa Slab One'];   // uma para cada variação (SIL OFL)
+
+// Config que o Godot (tools/godot_limpeza/fachada_b.gd) usa para montar a loja. `fonte`: 0, 1 ou 2 (uma por variação).
+export function configFachada(plano, texturas, placa, fonte = 0) {
+  const v = normalizarVariacao(plano.variacao || {});
+  return { largura: plano.largura_m, altura: plano.altura_m, texturas, letreiro: placa, marca: plano.marca, fonte, toldo: plano.toldo, ...v };
 }
 
 // Nome de arquivo seguro para exportar ao jogo (ex.: "cafe table" -> "cafe_table").

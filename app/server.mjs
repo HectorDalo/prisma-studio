@@ -10,7 +10,7 @@ import { Tradutor, pareceportugues } from './lib/tradutor.mjs';
 import { Online, MODELOS_ONLINE } from './lib/online.mjs';
 import { Descritor } from './lib/descritor.mjs';
 import { Limpeza } from './lib/limpeza.mjs';
-import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, normalizarDescricao, LOTE_MAX, normalizarFachada, marcaLimpa, promptLetreiro, configFachada } from './lib/estilo3d.mjs';
+import { promptImagem, ESTILO_EQ, TAMANHOS, correcaoPara, lerLote, pedidoDoLote, precisaCostura, normalizarDescricao, LOTE_MAX, normalizarFachada, marcaLimpa, promptPlaca, configFachada, escolherVariacao, FONTES_LETREIRO } from './lib/estilo3d.mjs';
 import { Exportador } from './lib/exportar.mjs';
 import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { deveEncerrar } from './lib/vigia.mjs';
@@ -396,32 +396,35 @@ function criarFachada({ tipo, marca, detalhes, cor, semente: base, revisado = nu
   return criarTrabalho('3d', `Fachada: ${marca} (${tipo})`.slice(0, 80), async (job) => {
     job.etapa = 'Planejando materiais e cores (qwen)…';
     const plano = revisado ? normalizarFachada(revisado, tipo, marca) : await descritor.planejarFachada(tipo, marca);
+    if (!plano.variacao) plano.variacao = escolherVariacao(base);
     const prefixo = 'prisma_' + job.id;
     const texturas = {};
     const texturasIds = {};
-    const slots = [['tijolo', plano.parede], ['reboco', plano.lateral], ['madeira', plano.madeira], ['piso', plano.piso]];
+    const slots = [['tijolo', plano.parede], ['reboco', plano.lateral], ['madeira', plano.madeira], ['piso', plano.piso], ['telhado', plano.telhado]];
     for (const [i, [slot, prompt]] of slots.entries()) {
       if (job.cancelado) return;
       const item = await texturaSemEmenda(job, prompt, base + i * 11, `${prefixo}_${slot}`);
       job.itens.push(item);
       texturas[slot] = galeria.caminho(item.id);
       texturasIds[slot] = item.id;
-      job.progresso = (i + 1) / 6;
+      job.progresso = (i + 1) / 9;
     }
-    // 3 variações do letreiro (o FLUX às vezes erra uma letra): a loja sai com a 1ª e você troca no visualizador
-    const promptSign = promptLetreiro(plano);
+    // 3 variações do letreiro: placas diferentes do FLUX (sem texto) e uma fonte para cada; o Godot escreve o nome.
+    // A loja sai com a 1ª e você troca no visualizador.
+    const promptSign = promptPlaca(plano);
     const letreiros = [];
     for (let v = 0; v < LETREIROS; v++) {
       if (job.cancelado) return;
-      job.etapa = `Escrevendo o letreiro (FLUX), variação ${v + 1} de ${LETREIROS}…`;
+      job.etapa = `Fazendo a placa do letreiro (FLUX), variação ${v + 1} de ${LETREIROS}…`;
       const [sinal] = await engine.executar(wf.flux({ prompt: promptSign, largura: 1344, altura: 768, passos: 4, semente: base + 99 + v, prefixo: `${prefixo}_l${v}` }));
-      letreiros.push((await guardar(job, sinal, 'imagem', { modelo: 'flux', prompt: promptSign, semente: base + 99 + v, para3d: true, letreiro: v + 1 }, 'png')).id);
+      letreiros.push((await guardar(job, sinal, 'imagem', { modelo: 'flux', prompt: promptSign, semente: base + 99 + v, para3d: true, letreiro: v + 1, fonte: FONTES_LETREIRO[v % 3] }, 'png')).id);
+      job.progresso = (6 + v) / 9;
     }
     await engine.liberar();
-    job.etapa = 'Montando a loja por peças (Godot)…';
-    const r = await montarFachada(job.id, plano, texturas, galeria.caminho(letreiros[0]));
+    job.etapa = 'Montando a loja por peças e escrevendo o nome (Godot)…';
+    const r = await montarFachada(job.id, plano, texturas, galeria.caminho(letreiros[0]), 0);
     const item = galeria.salvar({ buffer: r.buffer, ext: 'glb', tipo: '3d', params: {
-      modelo: 'fachada', pedido: `${tipo}: ${marca}`, fachada: plano, previa: letreiros[0], letreiros, letreiro_escolhido: 0, texturas: texturasIds, semente: base,
+      modelo: 'fachada', pedido: `${tipo}: ${marca}`, fachada: plano, previa: letreiros[0], letreiros, fontes: FONTES_LETREIRO, letreiro_escolhido: 0, texturas: texturasIds, semente: base,
       vocab: { en: plano.tipo_en, pt: plano.tipo_pt, categoria: 'building', medidas_m: { largura: r.tamanho_m[0], profundidade: r.tamanho_m[2], altura: r.tamanho_m[1] } },
       origem_medidas: revisado ? 'revisao' : 'qwen',
       tamanho: 'fachada', faces: r.faces, tamanho_m: r.tamanho_m, bytes: r.bytes, colisoes: r.colisoes, cor: 'textura', estilo: 'englishquest',
@@ -436,10 +439,10 @@ function criarFachada({ tipo, marca, detalhes, cor, semente: base, revisado = nu
 const LETREIROS = 3;
 
 // Monta a loja no Godot (fachada_exportar.gd) e devolve o .glb e as medidas.
-async function montarFachada(id, plano, texturas, letreiro) {
+async function montarFachada(id, plano, texturas, letreiro, fonte = 0) {
   const pasta = join(RAIZ, 'tmp', '3d'); mkdirSync(pasta, { recursive: true });
   const cfg = join(pasta, id + '_fachada.json'); const saida = join(pasta, id + '_fachada.glb');
-  writeFileSync(cfg, JSON.stringify(configFachada(plano, texturas, letreiro)));
+  writeFileSync(cfg, JSON.stringify(configFachada(plano, texturas, letreiro, fonte)));
   try {
     const r = await limpeza.rodar('fachada_exportar.gd', [cfg, saida]);
     return { ...r, buffer: readFileSync(saida) };
@@ -452,7 +455,11 @@ rota('POST', '/api/fachada/planejar', async (req, res) => {
   const tipo = texto(b.tipo, 60);
   const marca = marcaLimpa(b.marca);
   if (!tipo || !marca) return json(res, { erro: 'Escreva o tipo de loja e o nome da marca.' }, 400);
-  try { json(res, { plano: await descritor.planejarFachada(tipo, marca) }); } catch (e) { json(res, { erro: e.message }, 503); }
+  try {
+    const plano = await descritor.planejarFachada(tipo, marca);
+    plano.variacao = escolherVariacao(semente(b.semente));   // sorteada aqui para você ver e mudar na revisão
+    json(res, { plano });
+  } catch (e) { json(res, { erro: e.message }, 503); }
 });
 
 rota('POST', '/api/fachada', async (req, res) => {
@@ -476,7 +483,7 @@ rota('POST', '/api/galeria/:id/letreiro', async (req, res, p) => {
   if (!(i >= 0 && i < pr.letreiros.length)) return json(res, { erro: 'Variação inválida.' }, 400);
   const texturas = Object.fromEntries(Object.entries(pr.texturas || {}).map(([slot, id]) => [slot, galeria.caminho(id)]).filter(([, c]) => c));
   try {
-    const r = await montarFachada(item.id + '_l' + i, pr.fachada, texturas, galeria.caminho(pr.letreiros[i]));
+    const r = await montarFachada(item.id + '_l' + i, pr.fachada, texturas, galeria.caminho(pr.letreiros[i]), i % 3);
     json(res, galeria.atualizar(item.id, r.buffer, { letreiro_escolhido: i, previa: pr.letreiros[i], faces: r.faces, bytes: r.bytes, tamanho_m: r.tamanho_m }));
   } catch (e) { json(res, { erro: e.message }, 500); }
 });

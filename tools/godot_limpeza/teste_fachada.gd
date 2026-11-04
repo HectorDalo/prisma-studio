@@ -76,5 +76,34 @@ func _rodar() -> void:
 	p.fill_rect(Rect2i(28, 30, 8, 24), Color(0.2, 0.1, 0.05))
 	var mf: Image = L.mascara_fundo(p, 0.1)
 	r["mascara_fundo"] = mf.get_pixel(2, 2).r < 0.1 and mf.get_pixel(15, 15).r > 0.9 and mf.get_pixel(31, 40).r > 0.9
+	# variação: 2 andares, degrau, rodapé, calha, laterais de tijolo e o nome escrito pelo Godot
+	loja.queue_free()
+	await physics_frame
+	var loja2: Node3D = F.montar({"marca": "Pão da Vila", "fonte": 1, "andares": 2, "degrau": true, "rodape": true, "calha": true, "laterais": "tijolo"})
+	root.add_child(loja2)
+	await physics_frame
+	await physics_frame
+	r["degrau_entra"] = await _andar(0.0) < -1.5
+	var malha2: MeshInstance3D = loja2.get_node("Loja")
+	r["dois_andares_altura"] = snappedf(malha2.get_aabb().size.y, 0.01)
+	var nomes := []
+	for sidx in malha2.mesh.get_surface_count():
+		nomes.append(malha2.mesh.surface_get_material(sidx).resource_name)
+	r["dois_andares_janelas"] = "vidro_escuro" in nomes
+	r["laterais_tijolo"] = "tijolo" in nomes and "reboco" in nomes and "telhado" in nomes
+	var piso_ok := false
+	var corpo2: StaticBody3D = loja2.get_node("Colisao")
+	for forma: CollisionShape3D in corpo2.get_children():
+		var caixa_f := forma.shape as BoxShape3D
+		if caixa_f and absf(forma.position.y + caixa_f.size.y / 2.0 - 0.15) < 0.001 and caixa_f.size.x > 6.0:
+			piso_ok = true
+	r["degrau_piso"] = piso_ok
+	var texto := loja2.get_node_or_null("Letreiro") as MeshInstance3D
+	r["texto_existe"] = texto != null
+	if texto:
+		var tm := texto.mesh as TextMesh
+		var cx := texto.global_transform * tm.get_aabb()
+		r["texto_na_placa"] = cx.size.x > 1.0 and cx.size.x < 5.2 and cx.position.y > 2.9 and cx.end.y < 4.1
+		r["texto_acento"] = tm.text == "Pão da Vila"
 	print("RELATORIO ", JSON.stringify(r))
 	quit()

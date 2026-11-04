@@ -213,7 +213,7 @@ function escolhaLetreiro(item, reabrir) {
   const p = item.params || {};
   if (p.modelo !== 'fachada' || !Array.isArray(p.letreiros)) return null;
   const escolhido = p.letreiro_escolhido || 0;
-  return h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Letreiro (escolha o que saiu escrito certo)'),
+  return h('div', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Letreiro (placa e fonte)'),
     h('div', { class: 'letreiros' }, ...p.letreiros.map((id, i) => h('button', {
       class: 'letreiro' + (i === escolhido ? ' on' : ''), type: 'button', title: i === escolhido ? 'Em uso' : 'Usar este letreiro',
       on: { click: async (ev) => {
@@ -222,7 +222,7 @@ function escolhaLetreiro(item, reabrir) {
         try { const novo = await postar(`/api/galeria/${item.id}/letreiro`, { indice: i }); itensAtualizados.set(item.id, novo); aviso('Letreiro trocado: a loja foi montada de novo.'); reabrir(); }
         catch (e) { aviso(e.message, true); ev.currentTarget.disabled = false; }
       } },
-    }, h('img', { src: `/api/galeria/${id}/arquivo`, alt: `variação ${i + 1}` }), h('span', {}, i === escolhido ? 'em uso' : `variação ${i + 1}`)))));
+    }, h('img', { src: `/api/galeria/${id}/arquivo`, alt: `variação ${i + 1}` }), h('span', {}, `${(p.fontes || [])[i] || 'variação ' + (i + 1)}${i === escolhido ? ' · em uso' : ''}`)))));
 }
 
 function reutilizar(item) {
@@ -401,9 +401,9 @@ function render3d() {
   // o FLUX erra acentos no letreiro ("Pão" sai "Páo"); a cidade é americana, então nomes em inglês sem acento funcionam melhor
   const dicaMarca = h('div', { class: 'dica' });
   const pintarDicaMarca = () => {
-    const acento = /[^\x00-\x7f]/.test(f.marca || '');
-    dicaMarca.textContent = acento ? 'Atenção: o FLUX costuma errar letras com acento (ã, é, ç) no letreiro. Para uma loja de cidade americana, prefira um nome em inglês sem acento.'
-      : 'Invente o nome (nada de marca real). O FLUX escreve no letreiro (3 variações; você escolhe a certa); nomes curtos saem com menos erro.';
+    const acento = false;   // o nome agora é escrito pelo Godot: acentos saem certos
+    dicaMarca.textContent = acento ? ''
+      : 'Invente o nome (nada de marca real). O Godot escreve o nome no letreiro com uma fonte de verdade (acentos certos); são 3 variações de placa e fonte.';
     dicaMarca.style.color = acento ? '#eab308' : '';
   };
   const campoMarca = h('input', { type: 'text', maxLength: 28, placeholder: 'Ex.: Hazelbrook Coffee (invente um nome)', value: f.marca || '', on: { input: (e) => { f.marca = e.target.value; salvarForm(); fecharRevisao(); pintarDicaMarca(); } } });
@@ -526,7 +526,7 @@ function render3d() {
     botao.disabled = true; const antes = botao.textContent; botao.textContent = 'O qwen está pensando… (10 a 30 s)';
     try {
       if (fach()) {
-        const { plano } = await postar('/api/fachada/planejar', { tipo: f.tipo, marca: f.marca });
+        const { plano } = await postar('/api/fachada/planejar', { tipo: f.tipo, marca: f.marca, semente });
         const c = camposFachada(plano);
         abrirRevisao(`Revise a loja "${plano.marca}"`, [c.no], 'Criar fachada', async () => {
           const pl = c.ler();
@@ -571,18 +571,26 @@ function render3d() {
     const en = t(p.tipo_en, 40); const pt = t(p.tipo_pt, 40);
     const larg = h('input', { type: 'number', min: 6, max: 10, step: 0.1, value: p.largura_m });
     const alt = h('input', { type: 'number', min: 4, max: 6, step: 0.1, value: p.altura_m });
-    const mats = ['parede', 'lateral', 'madeira', 'piso'].map((k) => [k, t(p[k])]);
+    const mats = ['parede', 'lateral', 'madeira', 'piso', 'telhado'].map((k) => [k, t(p[k])]);
+    const v = p.variacao || {};
+    const andares = h('select', {}, h('option', { value: 1, selected: v.andares !== 2 }, '1 andar'), h('option', { value: 2, selected: v.andares === 2 }, '2 andares (janelas em cima)'));
+    const laterais = h('select', {}, h('option', { value: 'reboco', selected: v.laterais !== 'tijolo' }, 'reboco'), h('option', { value: 'tijolo', selected: v.laterais === 'tijolo' }, 'igual à frente'));
+    const marca = (rot, val) => { const i = h('input', { type: 'checkbox', checked: !!val }); return [i, h('label', { class: 'marca-check' }, i, rot)]; };
+    const [rodape, lRodape] = marca('rodapé de pedra', v.rodape); const [calha, lCalha] = marca('calha', v.calha); const [degrau, lDegrau] = marca('degrau na porta', v.degrau);
     const cores = p.toldo.map((c) => h('input', { type: 'color', value: c, class: 'cor-toldo' }));
     const det = t((p.detalhes || []).join(', '), 200);
-    const ROT = { parede: 'Parede da frente', lateral: 'Paredes do lado', madeira: 'Madeira (rodapé e moldura)', piso: 'Piso de dentro' };
+    const ROT = { parede: 'Parede da frente', lateral: 'Paredes do lado', madeira: 'Madeira (painel e moldura)', piso: 'Piso de dentro', telhado: 'Telhado' };
     const no = h('div', { class: 'item-revisao' },
       h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Tipo de loja em inglês'), en), h('div', { class: 'campo' }, h('label', {}, 'Em português'), pt)),
       h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Largura (m)'), larg), h('div', { class: 'campo' }, h('label', {}, 'Altura (m)'), alt),
         h('div', { class: 'campo' }, h('label', {}, 'Toldo'), h('div', { style: 'display:flex;gap:6px' }, ...cores))),
+      h('div', { class: 'linha' }, h('div', { class: 'campo' }, h('label', {}, 'Andares'), andares), h('div', { class: 'campo' }, h('label', {}, 'Laterais e fundo'), laterais)),
+      h('div', { class: 'campo', style: 'flex-direction:row;gap:14px;flex-wrap:wrap' }, lRodape, lCalha, lDegrau),
       h('details', {}, h('summary', {}, 'Materiais (texto em inglês para o FLUX)'), ...mats.map(([k, i]) => h('div', { class: 'campo' }, h('label', {}, ROT[k]), i))),
       h('div', { class: 'campo' }, h('label', {}, 'Detalhes da calçada (separados por vírgula)'), det));
     const ler = () => ({ ...p, tipo_en: en.value.trim().toLowerCase(), tipo_pt: pt.value.trim().toLowerCase(), largura_m: num(larg.value), altura_m: num(alt.value),
-      ...Object.fromEntries(mats.map(([k, i]) => [k, i.value.trim()])), toldo: cores.map((c) => c.value), detalhes: det.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3) });
+      ...Object.fromEntries(mats.map(([k, i]) => [k, i.value.trim()])), toldo: cores.map((c) => c.value), detalhes: det.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3),
+      variacao: { andares: Number(andares.value), laterais: laterais.value, rodape: rodape.checked, calha: calha.checked, degrau: degrau.checked } });
     return { no, ler };
   }
 }

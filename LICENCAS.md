@@ -1,6 +1,6 @@
 # Licenças de terceiros
 
-O código deste repositório (app, lançador, ferramentas) é MIT. Nada abaixo é distribuído aqui (tudo é baixado pelo usuário das fontes oficiais), com uma exceção: o visualizador 3D model-viewer fica em `app/public/vendor/`, com a licença ao lado.
+O código deste repositório (app, lançador, ferramentas) é MIT. Nada abaixo é distribuído aqui (tudo é baixado pelo usuário das fontes oficiais), com duas exceções: o visualizador 3D model-viewer fica em `app/public/vendor/` e as fontes do letreiro em `tools/godot_limpeza/fontes/`, cada um com a licença ao lado.
 
 | Item | Licença | Uso comercial |
 |---|---|---|
@@ -19,6 +19,7 @@ O código deste repositório (app, lançador, ferramentas) é MIT. Nada abaixo �
 | qwen2.5:7b (pelo Ollama da Elara Voz, não fica neste repositório) | Apache-2.0 | sim |
 | Ollama | MIT | sim |
 | Godot Engine 4.7 (usado sem tela para limpar os .glb; o do EnglishQuest) | MIT | sim |
+| Fontes do letreiro: Lilita One, Pacifico e Alfa Slab One (Google Fonts, em `tools/godot_limpeza/fontes/`, com o OFL ao lado) | SIL Open Font License 1.1 | sim (o nome da loja vira letras 3D dentro do .glb; a OFL permite usar em produtos) |
 | model-viewer 4.0.0 (Google, `app/public/vendor/`, inclui three.js e lit) | Apache-2.0 (three.js: MIT; lit: BSD-3-Clause) | sim |
 
 Os modelos têm licenças próprias que valem para as imagens, vídeos e modelos 3D gerados: leia-as antes de publicar ou vender resultados. O Criar 3D só usa modelos com licença comercial e sem restrição de território (o Hunyuan3D foi descartado por excluir União Europeia, Reino Unido e Coreia do Sul).
