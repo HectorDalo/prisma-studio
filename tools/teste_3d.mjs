@@ -269,7 +269,7 @@ if (!limpeza.disponivel()) { ok(false, 'Godot encontrado em ' + limpeza.godot); 
   const cfgF = join(TMP, 'fachada.json'); const glbF = join(TMP, 'fachada.glb');
   writeFileSync(cfgF, JSON.stringify({ largura: 7, altura: 4.5, toldo: ['#1e88e5', '#ffffff'] }));
   const ex2 = await limpeza.rodar('fachada_exportar.gd', [cfgF, glbF]);
-  ok(existsSync(glbF) && ex2.colisoes >= 10 && Math.abs(ex2.tamanho_m[1] - 4.68) < 0.3 && ex2.faces < 2000, `exporta a loja: ${ex2.faces} faces, ${ex2.colisoes} caixas de colisão "-colonly"`);
+  ok(existsSync(glbF) && ex2.colisoes >= 10 && Math.abs(ex2.tamanho_m[1] - 4.68) < 0.3 && ex2.faces < 2000, `exporta a loja: ${ex2.faces} faces, ${ex2.colisoes} caixas de colisão convexas ("-convcolonly")`);
   ok(ex2.no_arquivo.imagens_webp >= 1 && ex2.no_arquivo.imagens_outras === 0, `texturas dentro do .glb em WebP (${ex2.no_arquivo.imagens_webp} imagens, nenhuma PNG)`);
   ok(ex2.no_arquivo.colisao_invisivel, 'as caixas de colisão vão invisíveis no .glb (eram elas as manchas pontilhadas e as laterais brancas)');
   writeFileSync(cfgF, JSON.stringify({ largura: 8, altura: 4.4, marca: 'Pão da Vila', fonte: 1, andares: 2, degrau: true, calha: true, rodape: true, laterais: 'tijolo' }));

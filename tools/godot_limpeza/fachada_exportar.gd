@@ -1,6 +1,7 @@
 extends SceneTree
 ## Monta a fachada por peças (fachada_b.gd) e salva um .glb pronto para o jogo (texturas dentro).
-## A colisão vai em nós "-colonly" (convenção do importador do Godot: viram colisão estática, sem malha visível),
+## A colisão vai em nós "-convcolonly" (convenção do importador do Godot: viram colisão estática CONVEXA, sem malha visível;
+## o "-colonly" virava malha de triângulos, e a câmera, que testa com uma esfera, tremia nas bordas da porta),
 ## e o vão da porta fica livre. Base em y = 0, frente olhando para +Z.
 ## godot --headless --path tools/godot_limpeza -s res://fachada_exportar.gd -- <config.json> <saida.glb>
 ## Escreve "RELATORIO {json}" com faces, bytes, tamanho e quantas caixas de colisão foram salvas.
@@ -28,7 +29,7 @@ func _rodar() -> void:
 		cfg["cor_texto"] = Color(cfg["cor_texto"])
 	var loja: Node3D = load("res://fachada_b.gd").montar(cfg)
 	root.add_child(loja)
-	# troca o StaticBody (que o glTF não guarda) por caixas "-colonly". O editor do Godot transforma essas caixas em colisão
+	# troca o StaticBody (que o glTF não guarda) por caixas "-convcolonly". O editor do Godot transforma essas caixas em colisão
 	# e esconde a malha; outros visualizadores (a prévia do Prisma, o Godot lendo o .glb em tempo de jogo) desenhariam as caixas.
 	# Por isso: material invisível e 1 cm para dentro (nunca no mesmo plano da parede = sem as manchas pontilhadas).
 	var invisivel := StandardMaterial3D.new()
@@ -44,7 +45,7 @@ func _rodar() -> void:
 		bm.size = Vector3(maxf(tam.x - 0.02, 0.005), maxf(tam.y - 0.02, 0.005), maxf(tam.z - 0.02, 0.005))
 		bm.material = invisivel
 		var mi := MeshInstance3D.new()
-		mi.name = ("rampa%02d-colonly" if cs.name.begins_with("Rampa") else "parede%02d-colonly") % n
+		mi.name = ("rampa%02d-convcolonly" if cs.name.begins_with("Rampa") else "parede%02d-convcolonly") % n
 		mi.mesh = bm
 		mi.transform = cs.transform
 		loja.add_child(mi)
@@ -84,7 +85,7 @@ func _rodar() -> void:
 			if m.resource_name == "texto":
 				no_arquivo["texto"] = true
 		for node in st2.get_nodes():
-			if node.resource_name.ends_with("-colonly") and node.mesh >= 0:
+			if node.resource_name.ends_with("colonly") and node.mesh >= 0:
 				var im: ImporterMesh = st2.get_meshes()[node.mesh].mesh
 				var mat := im.get_surface_material(0) as BaseMaterial3D
 				if mat == null or mat.albedo_color.a > 0.01:

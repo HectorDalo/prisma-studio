@@ -151,7 +151,10 @@ static func montar(cfg_in: Dictionary) -> Node3D:
 		elif eh_vitrine:
 			m.caixa("madeira", Vector3(x0, 0, -T), Vector3(x1, vy, 0.04), true)        # painel de madeira sob a vitrine
 			m.caixa("tijolo", Vector3(x0, vy + vit.y, -T), Vector3(x1, H, 0), true)
-			m.caixa("vidro", Vector3(x0, vy, -T * 0.55), Vector3(x1, vy + vit.y, -T * 0.45), true)   # vidro também colide
+			m.caixa("vidro", Vector3(x0, vy, -T * 0.55), Vector3(x1, vy + vit.y, -T * 0.45), false)
+			# a colisão da vitrine ocupa a espessura toda da parede: um vidro de 2,5 cm (0,5 cm depois de recuar 1 cm de cada
+			# lado na exportação) deixava a cápsula do jogador atravessar
+			m.solidos.append(AABB(Vector3(x0, vy, -T), Vector3(x1 - x0, vit.y, T)))
 			for y in [vy, vy + vit.y - 0.08]:
 				m.caixa("madeira", Vector3(x0, y, -T * 0.5), Vector3(x1, y + 0.08, 0.05), false)
 			m.caixa("madeira", Vector3(meio - 0.04, vy, -T * 0.5), Vector3(meio + 0.04, vy + vit.y, 0.03), false)
