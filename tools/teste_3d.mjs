@@ -141,6 +141,14 @@ ok(temPadrao(0.14) && !temPadrao(0.03), 'limite do padrão decorativo: 0,08');
 ok(ehFarmacia('pharmacy') && ehFarmacia('drugstore') && !ehFarmacia('bakery'), 'farmácia reconhecida para a cruz');
 ok(configFachada({ tipo_en: 'pharmacy', cor_detalhe: '#2f6e4f', toldo: ['#2f6e4f', '#ffffff'] }, {}, '', 0).cruz === true && configFachada({ tipo_en: 'cafe', toldo: ['#2f6e4f', '#ffffff'] }, {}, '', 0).cor_detalhe === null, 'config da fachada: cruz na farmácia e cor dos detalhes');
 ok(normalizarFachada({ cor_detalhe: '#123456' }, 'x', 'y').cor_detalhe === '#123456' && normalizarFachada({ toldo: ['#aa0000', '#ffffff'] }, 'x', 'y').cor_detalhe === '#aa0000', 'cor dos detalhes do qwen, ou a do toldo');
+{
+  const { CONJUNTOS, conjuntoPara, PECAS_DE_MESA } = await import('../app/lib/calcadas.mjs');
+  ok(Object.entries(CONJUNTOS).every(([t, c]) => c.pecas.includes('tables') === c.mesas) && Object.entries(CONJUNTOS).filter(([, c]) => c.mesas).map(([t]) => t).sort().join() === 'cafe,pizzeria,restaurant', 'conjuntos de calçada: mesas só no café, no restaurante e na pizzaria');
+  ok(PECAS_DE_MESA.includes('tables'), 'a peça de mesa é a "tables"');
+  ok(conjuntoPara('pharmacy') === 'pharmacy' && conjuntoPara('ramen restaurant') === 'restaurant' && conjuntoPara('ice cream shop') === 'ice_cream' && conjuntoPara('clothing store') === 'clothing' && conjuntoPara('pizzeria') === 'pizzeria' && conjuntoPara('mini market') === 'market', 'cada tipo de loja ganha o conjunto de calçada certo');
+  const tipos = Object.values(CONJUNTOS).map((c) => c.pecas.join());
+  ok(new Set(tipos).size === tipos.length, 'a calçada de cada tipo é diferente das outras');
+}
 const cf = configFachada({ ...pf, variacao: { andares: 2, laterais: 'tijolo', rodape: true, calha: false, degrau: true } }, { tijolo: 'a.png' }, 'l.png', 2);
 ok(cf.largura === 10 && cf.altura === 4 && cf.letreiro === 'l.png' && cf.toldo[1] === '#ffffff' && cf.marca === 'Patinhas Felizes' && cf.fonte === 2, 'config para o Godot: placa, nome e fonte da variação');
 ok(cf.andares === 2 && cf.laterais === 'tijolo' && cf.rodape && cf.degrau && !cf.calha, 'config leva a variação (andares, laterais, rodapé, calha, degrau)');

@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, copyFileSync, writeFileSync, readFileSync } from
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nomeArquivo, vocabExportado } from './estilo3d.mjs';
+import { conjuntoPara } from './calcadas.mjs';
 
 export const DESTINO_PADRAO = 'D:\\EnglishQuest\\EnglishQuest\\assets\\prisma';
 const RAIZ_PRISMA = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -61,7 +62,9 @@ export class Exportador {
     }
     copyFileSync(caminhoGlb, glb);
     importarEmbutido(glb);
-    writeFileSync(json, JSON.stringify(vocabExportado(item, nome + '.glb'), null, 1) + '\n');
+    const vocab = vocabExportado(item, nome + '.glb');
+    if (item.params?.modelo === 'fachada') vocab.calcada = conjuntoPara(item.params.fachada?.tipo_en || vocab.en);   // a calçada da loja (calcadas.mjs)
+    writeFileSync(json, JSON.stringify(vocab, null, 1) + '\n');
     return { nome, glb, json, backup };
   }
 }
